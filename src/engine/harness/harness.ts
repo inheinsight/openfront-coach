@@ -212,6 +212,9 @@ async function main() {
         maxTroops: [],
         gold: [],
         goldEarned: [],
+        tradeGold: [],
+        trainGold: [],
+        piracyGold: [],
         alive: [],
         allies: [],
         attacksOut: [],
@@ -239,13 +242,16 @@ async function main() {
       const s = ensureSeries(p.smallID());
       // pad if the player appeared late
       while (s.tiles.length < sampleTicks.length - 1 - s.from) {
-        for (const k of ["tiles", "troops", "maxTroops", "gold", "goldEarned", "alive", "allies", "attacksOut", "attacksIn"]) s[k].push(0);
+        for (const k of ["tiles", "troops", "maxTroops", "gold", "goldEarned", "tradeGold", "trainGold", "piracyGold", "alive", "allies", "attacksOut", "attacksIn"]) s[k].push(0);
       }
       s.tiles.push(safe(() => p.numTilesOwned(), 0));
       s.troops.push(Math.round(safe(() => p.troops(), 0)));
       s.maxTroops.push(Math.round(safe(() => game.config().maxTroops(p), 0)));
       s.gold.push(num(safe(() => p.gold(), 0)));
       s.goldEarned.push(num(safe(() => p.goldEarned?.(), 0)));
+      s.tradeGold.push(num(safe(() => p.tradeGold?.(), 0)));
+      s.trainGold.push(num(safe(() => p.trainGold?.(), 0)));
+      s.piracyGold.push(num(safe(() => p.piracyGold?.(), 0)));
       s.alive.push(safe(() => p.isAlive(), false) ? 1 : 0);
       s.allies.push(safe(() => p.allies().length, 0));
       s.attacksOut.push(Math.round(safe(() => p.outgoingAttacks().reduce((a: number, x: Any) => a + x.troops(), 0), 0)));
@@ -359,6 +365,192 @@ async function main() {
       if (rec !== undefined) {
         hashesChecked++;
         if (rec !== hu.hash && desync === null) desync = { tick: hu.tick, recorded: rec, computed: hu.hash };
+      }
+    }
+  }
+
+
+  // --- structures and warships (humans) --------------------------------------
+  // Every building and warship a human owns: where it went, what surrounded
+  // it when placed, how it was upgraded, and what became of it.
+  const STRUCT = new Set(["City", "Port", "Factory", "Defense Post", "SAM Launcher", "Missile Silo", "Warship"]);
+  const structures = new Map<number, Any>();
+  const cfg = () => game.config();
+  const dist = (a: number, b: number) => Math.hypot(game.x(a) - game.x(b), game.y(a) - game.y(b));
+
+  /** Border tiles of `p`, split into fronts (touching another player) and other edges. */
+  function borderInfo(p: Any) {
+    const all: number[] = [];
+    for (const t of safe(() => p.borderTiles(), [] as Any)) all.push(t);
+    const stride = Math.max(1, Math.ceil(all.length / 6000));
+    const front: { t: number; enemy: number }[] = [];
+    const edge: number[] = [];
+    for (let i = 0; i < all.length; i += stride) {
+      const t = all[i];
+      let enemy = 0;
+      game.forEachNeighbor(t, (n: number) => {
+        const o = game.ownerID(n);
+        if (o && o !== p.smallID()) enemy = o;
+      });
+      if (enemy) front.push({ t, enemy });
+      else edge.push(t);
+    }
+    return { front, edge, all: all.filter((_, i) => i % stride === 0) };
+  }
+
+  function nearest<T>(tile: number, items: T[], tileOf: (x: T) => number): { item: T | null; d: number } {
+    let best: T | null = null;
+    let bd = Infinity;
+    for (const it of items) {
+      const d = dist(tile, tileOf(it));
+      if (d < bd) {
+        bd = d;
+        best = it;
+      }
+    }
+    return { item: best, d: bd };
+  }
+
+  /** Expected gold per trade ship for a port at `tile`, mirroring PortExecution's partner weighting. */
+  function tradeValue(p: Any, tile: number) {
+    const comps = new Set<number>();
+    game.forEachNeighbor(tile, (n: number) => {
+      if (!game.isWater(n)) return;
+      const c = safe(() => game.getWaterComponent(n), null);
+      if (c !== null) comps.add(c);
+    });
+    if (!comps.size) return { partners: 0, expGold: 0, medianDist: null as number | null, shortShare: 0 };
+    const ports = game
+      .players()
+      .filter((o: Any) => o !== p && safe(() => o.canTrade(p), true))
+      .flatMap((o: Any) => safe(() => o.units("Port"), [] as Any[]))
+      .filter((u: Any) => [...comps].some((c) => safe(() => game.hasWaterComponent(u.tile(), c), false)))
+      .map((u: Any) => ({ u, d: game.manhattanDist(tile, u.tile()) }))
+      .sort((a: Any, b: Any) => a.d - b.d);
+    if (!ports.length) return { partners: 0, expGold: 0, medianDist: null, shortShare: 0 };
+    const debuff = safe(() => cfg().tradeShipShortRangeDebuff(), 300);
+    const bonusN = safe(() => cfg().proximityBonusPortsNb(ports.length), 4);
+    let wsum = 0;
+    let gsum = 0;
+    ports.forEach(({ u, d }: Any, i: number) => {
+      const lvl = safe(() => u.level(), 1);
+      let w = lvl;
+      const tooClose = d < debuff;
+      if (!tooClose && i < bonusN) w += lvl;
+      if (!tooClose && safe(() => p.isFriendly(u.owner()), false)) w += lvl;
+      wsum += w;
+      gsum += w * num(safe(() => cfg().tradeShipGold(d, p), 0));
+    });
+    const ds = ports.map((x: Any) => x.d);
+    return { partners: ports.length, expGold: Math.round(gsum / wsum), medianDist: ds[ds.length >> 1], shortShare: ds.filter((d: number) => d < debuff).length / ds.length };
+  }
+
+  function placementContext(p: Any, u: Any) {
+    const type = String(u.type());
+    const tile = u.tile();
+    const b = borderInfo(p);
+    const nf = nearest(tile, b.front, (f) => f.t);
+    const enemy = nf.item ? game.playerBySmallID(nf.item.enemy) : null;
+    const depth = nearest(tile, b.all, (t) => t).d;
+    const own = safe(() => p.units(), [] as Any[]).filter((x: Any) => x.id() !== u.id());
+    const near = (types: string[], r: number) => own.filter((x: Any) => types.includes(String(x.type())) && dist(tile, x.tile()) <= r).length;
+    const ctx: Any = {
+      x: game.x(tile),
+      y: game.y(tile),
+      depth: Math.round(depth),
+      distFront: Number.isFinite(nf.d) ? Math.round(nf.d) : null,
+      frontEnemy: enemy && safe(() => enemy.isPlayer(), false) ? enemy.smallID() : null,
+      frontEnemyTroops: enemy && safe(() => enemy.isPlayer(), false) ? Math.round(safe(() => enemy.troops(), 0)) : null,
+      frontEnemyAllied: enemy && safe(() => enemy.isPlayer(), false) ? safe(() => p.isFriendly(enemy), false) : null,
+      myTroops: Math.round(safe(() => p.troops(), 0)),
+      myCap: Math.round(safe(() => cfg().maxTroops(p), 0)),
+      gold: num(safe(() => p.gold(), 0)),
+      tiles: safe(() => p.numTilesOwned(), 0),
+      sameTypeOwned: own.filter((x: Any) => String(x.type()) === type).length,
+      nearestSame: Math.round(nearest(tile, own.filter((x: Any) => String(x.type()) === type), (x: Any) => x.tile()).d) || null,
+      railLinks: near(["City", "Port", "Factory"], safe(() => cfg().trainStationMaxRange(), 110)),
+      samCovers: type === "SAM Launcher" ? near(["City", "Port", "Factory", "Missile Silo", "Defense Post"], safe(() => cfg().samRange(1), 70)) : undefined,
+      underSam: own.some((x: Any) => String(x.type()) === "SAM Launcher" && dist(tile, x.tile()) <= safe(() => cfg().samRange(x.level()), 70)),
+    };
+    if (type === "Port") {
+      const here = tradeValue(p, tile);
+      Object.assign(ctx, { trade: here });
+      // Best alternative: the shore tile of your territory with the highest expected gold.
+      const shore = b.all.filter((t: number) => safe(() => game.isShore(t), false));
+      const step = Math.max(1, Math.ceil(shore.length / 250));
+      let best: Any = null;
+      for (let i = 0; i < shore.length; i += step) {
+        const v = tradeValue(p, shore[i]);
+        if (!best || v.expGold > best.v.expGold) best = { t: shore[i], v };
+      }
+      if (best && best.v.expGold > here.expGold) ctx.betterSpot = { x: game.x(best.t), y: game.y(best.t), trade: best.v };
+    }
+    if (type === "City" || type === "Missile Silo" || type === "SAM Launcher" || type === "Factory") {
+      // Safest interior spot: the own tile farthest from any front.
+      const tiles: number[] = [];
+      for (const t of safe(() => p.tiles(), [] as Any)) tiles.push(t);
+      const step = Math.max(1, Math.ceil(tiles.length / 1500));
+      const fronts = b.front.length > 600 ? b.front.filter((_, i) => i % Math.ceil(b.front.length / 600) === 0) : b.front;
+      let best: Any = null;
+      if (fronts.length) {
+        for (let i = 0; i < tiles.length; i += step) {
+          const d = nearest(tiles[i], fronts, (f) => f.t).d;
+          if (!best || d > best.d) best = { t: tiles[i], d };
+        }
+      }
+      if (best && nf.d < best.d * 0.5) ctx.betterSpot = { x: game.x(best.t), y: game.y(best.t), distFront: Math.round(best.d) };
+    }
+    if (type === "Defense Post" && b.front.length) {
+      // The front facing your strongest neighbour.
+      let strongest: Any = null;
+      for (const f of b.front) {
+        const e = game.playerBySmallID(f.enemy);
+        const tr = safe(() => e.troops(), 0);
+        if (!strongest || tr > strongest.tr) strongest = { f, tr, id: f.enemy };
+      }
+      if (strongest && strongest.id !== ctx.frontEnemy) ctx.betterSpot = { x: game.x(strongest.f.t), y: game.y(strongest.f.t), enemy: strongest.id };
+    }
+    return ctx;
+  }
+
+  function trackStructures(tick: number) {
+    for (const p of humans()) {
+      for (const u of safe(() => p.units(), [] as Any[])) {
+        const type = String(u.type());
+        if (!STRUCT.has(type)) continue;
+        const id = u.id();
+        let rec = structures.get(id);
+        if (!rec) {
+          rec = { id, type, owner: p.smallID(), builtTick: tick, levels: [[tick, safe(() => u.level(), 1)]], context: safe(() => placementContext(p, u), null) };
+          if (type === "Warship") rec.path = [];
+          structures.set(id, rec);
+        }
+        if (rec.endTick !== undefined) continue;
+        const lvl = safe(() => u.level(), 1);
+        if (rec.levels[rec.levels.length - 1][1] !== lvl) rec.levels.push([tick, lvl]);
+        if (type === "Warship") {
+          const t = u.tile();
+          const last = rec.path[rec.path.length - 1];
+          const x = game.x(t);
+          const y = game.y(t);
+          if ((!last || Math.hypot(last[1] - x, last[2] - y) > 4) && rec.path.length < 600) rec.path.push([tick, x, y]);
+        }
+      }
+    }
+    for (const rec of structures.values()) {
+      if (rec.endTick !== undefined) continue;
+      const u = safe(() => game.unit(rec.id), null);
+      if (!u || !safe(() => u.isActive(), false)) {
+        rec.endTick = tick;
+        rec.fate = "destroyed";
+        rec.destroyedBy = safe(() => u?.destroyer?.()?.smallID?.() ?? null, null);
+        continue;
+      }
+      const owner = safe(() => u.owner().smallID(), rec.owner);
+      if (owner !== rec.owner) {
+        rec.endTick = tick;
+        rec.fate = "captured";
+        rec.capturedBy = owner;
       }
     }
   }
@@ -560,7 +752,10 @@ async function main() {
       break;
     }
     trackAttacks(after);
-    if (after % sampleEvery === 0) sample(after);
+    if (after % sampleEvery === 0) {
+      sample(after);
+      safe(() => trackStructures(after), undefined);
+    }
     if (after % frameEvery === 0) safe(() => ownershipFrame(after), undefined);
     const pct = Math.floor(((i + 1) / turns.length) * 100);
     if (pct >= lastProgress + 2) {
@@ -572,6 +767,7 @@ async function main() {
   sample(finalTick);
   safe(() => ownershipFrame(finalTick), undefined);
   trackAttacks(finalTick + 1_000_000); // close any still-open attacks
+  safe(() => trackStructures(finalTick), undefined);
   for (const p of game.players()) if (isTracked(p)) describe(p);
 
   // final per-player state
@@ -635,6 +831,7 @@ async function main() {
     attacks,
     actions,
     events,
+    structures: [...structures.values()],
     transfers: [...transferLog.entries()].map(([k, tiles]) => {
       const [tick, to, from] = k.split(":").map(Number);
       return { tick, to, from, tiles };

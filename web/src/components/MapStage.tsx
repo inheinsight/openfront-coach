@@ -4,6 +4,8 @@ export interface DecodedMap {
   width: number;
   height: number;
   frameEvery: number;
+  /** Game tiles per frame pixel. */
+  frameScale: number;
   ticks: number;
   frameTicks: number[];
   frames: Uint16Array[];
@@ -13,6 +15,25 @@ export interface DecodedMap {
 }
 
 export type CameraMode = "follow" | "whole" | "free";
+
+/** A building, suggestion or unit drawn over the map, in frame-pixel coordinates. */
+export interface MapMarker {
+  fx: number;
+  fy: number;
+  glyph: string;
+  color: string;
+  label?: string;
+  selected?: boolean;
+  /** A suggested spot: dashed outline instead of a filled badge. */
+  ghost?: boolean;
+  /** Range ring in frame pixels (Defense Post, SAM, rail range...). */
+  ring?: number;
+}
+
+export interface MapPath {
+  points: [number, number][];
+  color: string;
+}
 
 interface Camera {
   x: number; // frame-pixel coordinates at the viewport centre
@@ -90,12 +111,21 @@ export function MapStage({
   focus,
   mode,
   onModeChange,
+  markers = [],
+  paths = [],
+  focusPoints,
+  showLabels = true,
 }: {
   map: DecodedMap;
   frameIndex: number;
   focus: number[];
   mode: CameraMode;
   onModeChange: (m: CameraMode) => void;
+  markers?: MapMarker[];
+  paths?: MapPath[];
+  /** When set (and following), frame these points instead of your territory. */
+  focusPoints?: [number, number][] | null;
+  showLabels?: boolean;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -149,7 +179,72 @@ export function MapStage({
     ctx.font = "600 13px Barlow, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    for (const id of ids) {
+    // Warship paths and building markers.
+    for (const p of paths) {
+      if (p.points.length < 2) continue;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      p.points.forEach(([fx, fy], i) => {
+        const [sx, sy] = toScreen(fx, fy);
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      });
+      ctx.stroke();
+      const [ex, ey] = toScreen(...p.points[p.points.length - 1]);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const ordered = [...markers].sort((a, b) => Number(!!a.selected) - Number(!!b.selected));
+    for (const m of ordered) {
+      const [sx, sy] = toScreen(m.fx + 0.5, m.fy + 0.5);
+      if (m.ring && m.selected) {
+        ctx.strokeStyle = m.color;
+        ctx.globalAlpha = 0.6;
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, m.ring * s, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      const r = m.selected ? 12 : 8;
+      if (m.ghost) {
+        ctx.strokeStyle = m.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(sx, sy, r + 3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = m.color;
+        ctx.strokeStyle = m.selected ? "#e9e2cf" : "#0b1624";
+        ctx.lineWidth = m.selected ? 2.5 : 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.fillStyle = m.ghost ? m.color : "#0d1726";
+      ctx.font = `700 ${m.selected ? 12 : 10}px Barlow Condensed, system-ui, sans-serif`;
+      ctx.fillText(m.glyph, sx, sy + 1);
+      if (m.label && (m.selected || m.ghost)) {
+        ctx.font = "600 12px Barlow, system-ui, sans-serif";
+        const tw = ctx.measureText(m.label).width + 12;
+        ctx.fillStyle = "rgba(11, 22, 36, 0.88)";
+        ctx.fillRect(sx - tw / 2, sy + r + 4, tw, 18);
+        ctx.fillStyle = m.ghost ? m.color : "#e9e2cf";
+        ctx.fillText(m.label, sx, sy + r + 14);
+      }
+    }
+    ctx.font = "600 13px Barlow, system-ui, sans-serif";
+
+    for (const id of showLabels ? ids : []) {
       const r = regs.get(id);
       if (!r?.n) continue;
       const isMe = id === map.me;
@@ -176,7 +271,7 @@ export function MapStage({
       ctx.fillStyle = color;
       ctx.fillText(label, cx, ly + 1);
     }
-  }, [base, ids, map.me, map.players, regs, size.h, size.w]);
+  }, [base, ids, map.me, map.players, regs, size.h, size.w, markers, paths, showLabels]);
 
   // Render the frame into an offscreen image at native resolution.
   useEffect(() => {
@@ -259,6 +354,18 @@ export function MapStage({
   useEffect(() => {
     if (mode === "whole") return void animateTo({ x: map.width / 2, y: map.height / 2, z: 1 });
     if (mode !== "follow") return void draw();
+    if (focusPoints && focusPoints.length) {
+      const xs = focusPoints.map((p) => p[0]);
+      const ys = focusPoints.map((p) => p[1]);
+      const minPX = Math.min(...xs);
+      const maxPX = Math.max(...xs);
+      const minPY = Math.min(...ys);
+      const maxPY = Math.max(...ys);
+      const bw = Math.max((maxPX - minPX) * 1.5, map.width / 9);
+      const bh = Math.max((maxPY - minPY) * 1.5, map.height / 9);
+      const z = Math.min(map.width / bw, (size.h / base) / bh);
+      return void animateTo({ x: (minPX + maxPX) / 2, y: (minPY + maxPY) / 2, z });
+    }
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -1;
@@ -277,7 +384,7 @@ export function MapStage({
     const bh = Math.max((maxY - minY + 1) * 1.7, map.height / 12);
     const z = Math.min(map.width / bw, (size.h / base) / bh);
     animateTo({ x: (minX + maxX + 1) / 2, y: (minY + maxY + 1) / 2, z });
-  }, [mode, regs, size.w, size.h]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, regs, size.w, size.h, JSON.stringify(focusPoints ?? null)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wheel zoom around the cursor, drag to pan, double-click to zoom in.
   useEffect(() => {

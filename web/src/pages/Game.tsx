@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Analysis, type GameSummary } from "../api";
 import { Markdown } from "../components/Markdown";
+import { EconomyTab } from "../components/EconomyTab";
 import { MapMoments } from "../components/MapMoments";
 import { SeverityCounts } from "../components/Moments";
 import { Scorecard } from "../components/Scorecard";
@@ -8,13 +9,14 @@ import { FrontLine, GoldChart, TroopChart } from "../components/Timeline";
 import { clock, fmtNum, gradeColor, GLYPH, pct, RESULT_LABEL, scoreColor, STATUS_LABEL } from "../format";
 import { Link, navigate } from "../router";
 
-type Tab = "debrief" | "moments" | "scorecard" | "attacks" | "economy" | "ask";
+type Tab = "debrief" | "moments" | "buildings" | "scorecard" | "attacks" | "economy" | "ask";
 const TABS: { key: Tab; label: string }[] = [
   { key: "debrief", label: "Debrief" },
   { key: "moments", label: "Map & key moments" },
+  { key: "buildings", label: "Economy & buildings" },
   { key: "scorecard", label: "Scorecard" },
   { key: "attacks", label: "Attack ledger" },
-  { key: "economy", label: "Troops & economy" },
+  { key: "economy", label: "Troops & gold" },
   { key: "ask", label: "Ask the coach" },
 ];
 
@@ -145,7 +147,7 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
         )}
 
         <div className="tabs" role="tablist">
-          {TABS.filter((t) => a.timeline || (t.key !== "economy" && t.key !== "attacks")).map((t) => (
+          {TABS.filter((t) => a.timeline || (t.key !== "economy" && t.key !== "attacks" && t.key !== "buildings")).map((t) => (
             <button key={t.key} role="tab" aria-selected={tab === t.key} className={tab === t.key ? "active" : ""} onClick={() => setTab(t.key)}>
               {t.label}
             </button>
@@ -161,6 +163,7 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
               <p className="muted">This game has no replay, so there's no map. Its key moments are listed in the debrief.</p>
             </div>
           ))}
+        {tab === "buildings" && <EconomyTab analysis={a} />}
         {tab === "scorecard" && <div className="panel"><Scorecard analysis={a} /></div>}
         {tab === "attacks" && <AttackTab a={a} />}
         {tab === "economy" && (

@@ -55,7 +55,7 @@ export interface MetricLine {
 }
 
 export interface CategoryScore {
-  key: "expansion" | "economy" | "troops" | "combat" | "defense" | "diplomacy" | "naval" | "nuclear";
+  key: "expansion" | "economy" | "buildings" | "troops" | "combat" | "defense" | "diplomacy" | "naval" | "nuclear";
   label: string;
   score: number; // 0-100
   grade: string;
@@ -166,6 +166,8 @@ export interface Analysis {
   } | null;
   leaderboard: PlayerSummary[];
   narrative: { text: string; provider: string; model: string } | null;
+  /** Economy, building placement and warship review (replay analyses only). */
+  economy?: import("./economy.js").EconomyReport;
   ai: {
     jev: {
       used: boolean;

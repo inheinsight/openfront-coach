@@ -45,6 +45,7 @@ export interface MapData {
   width: number;
   height: number;
   frameEvery?: number;
+  frameScale?: number;
   ticks?: number;
   terrain: string | null;
   frames: { tick: number; data: string }[];

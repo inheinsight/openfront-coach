@@ -181,6 +181,7 @@ app.get("/api/games/:id/map", (req, res) => {
     width: replay.meta.frameWidth,
     height: replay.meta.frameHeight,
     frameEvery: replay.meta.frameEvery,
+    frameScale: replay.meta.frameScale,
     ticks: replay.meta.ticks,
     terrain: replay.terrain,
     frames: replay.frames,

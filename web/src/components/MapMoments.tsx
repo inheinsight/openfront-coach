@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Analysis } from "../api";
+import type { Analysis } from "../api";
 import { clock, GLYPH, pct, SEV_LABEL } from "../format";
-import { MapStage, type CameraMode, type DecodedMap } from "./MapStage";
-
-async function gunzip(b64: string): Promise<ArrayBuffer> {
-  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Response(stream).arrayBuffer();
-}
+import { MapStage, type CameraMode } from "./MapStage";
+import { frameAt as frameIndexAt, useDecodedMap } from "./useMap";
 
 /**
  * The map replay with your key moments laid along its timeline: the map
@@ -23,45 +18,14 @@ export function MapMoments({
   selectedId: string | null;
   onSelect: (id: string, tick: number) => void;
 }) {
-  const [map, setMap] = useState<DecodedMap | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { map, err } = useDecodedMap(analysis.gameId);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mode, setMode] = useState<CameraMode>("follow");
   const [cardId, setCardId] = useState<string | null>(selectedId);
   const moments = analysis.moments;
 
-  useEffect(() => {
-    let alive = true;
-    api
-      .map(analysis.gameId)
-      .then(async (m) => {
-        const frames = await Promise.all(m.frames.map(async (f) => new Uint16Array(await gunzip(f.data))));
-        const land = m.terrain ? new Uint8Array(await gunzip(m.terrain)) : null;
-        if (!alive) return;
-        setMap({
-          width: m.width,
-          height: m.height,
-          frameEvery: m.frameEvery ?? 300,
-          ticks: m.ticks ?? m.frames[m.frames.length - 1]?.tick ?? 0,
-          frameTicks: m.frames.map((f) => f.tick),
-          frames,
-          land,
-          me: m.me,
-          players: new Map(m.players.map((p) => [p.smallID, p])),
-        });
-      })
-      .catch((e) => setErr(String(e.message ?? e)));
-    return () => {
-      alive = false;
-    };
-  }, [analysis.gameId]);
-
-  const frameAt = (tick: number) => {
-    if (!map) return 0;
-    const i = map.frameTicks.findIndex((t) => t >= tick);
-    return i < 0 ? map.frameTicks.length - 1 : i;
-  };
+  const frameAt = (tick: number) => (map ? frameIndexAt(map, tick) : 0);
 
   // Jump to a moment chosen outside (front-line chart) or here.
   useEffect(() => {

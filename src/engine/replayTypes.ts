@@ -17,6 +17,10 @@ export interface PlayerSeries {
   maxTroops: number[];
   gold: number[];
   goldEarned: number[];
+  /** Cumulative gold from trade ships, trains and captured ships (may be absent in older replays). */
+  tradeGold?: number[];
+  trainGold?: number[];
+  piracyGold?: number[];
   alive: number[];
   allies: number[];
   attacksOut: number[];
@@ -82,6 +86,49 @@ export interface ActionContext {
   isDisconnected?: boolean;
 }
 
+export interface TradeValue {
+  partners: number;
+  expGold: number;
+  medianDist: number | null;
+  shortShare: number;
+}
+
+export interface PlacementContext {
+  x: number;
+  y: number;
+  depth: number;
+  distFront: number | null;
+  frontEnemy: number | null;
+  frontEnemyTroops: number | null;
+  frontEnemyAllied: boolean | null;
+  myTroops: number;
+  myCap: number;
+  gold: number;
+  tiles: number;
+  sameTypeOwned: number;
+  nearestSame: number | null;
+  railLinks: number;
+  samCovers?: number;
+  underSam: boolean;
+  trade?: TradeValue;
+  betterSpot?: { x: number; y: number; trade?: TradeValue; distFront?: number; enemy?: number };
+}
+
+export interface StructureRecord {
+  id: number;
+  type: string;
+  owner: number;
+  builtTick: number;
+  levels: [number, number][];
+  context: PlacementContext | null;
+  endTick?: number;
+  fate?: "destroyed" | "captured";
+  destroyedBy?: number | null;
+  capturedBy?: number;
+  /** Warships only: [tick, x, y] positions. */
+  path?: [number, number, number][];
+}
+
 export interface ReplayEvent {
   tick: number;
   kind: string;
@@ -134,6 +181,7 @@ export interface ReplayData {
   attacks: AttackRecord[];
   actions: ActionContext[];
   events: ReplayEvent[];
+  structures?: StructureRecord[];
   /** Tiles changing hands where a human is involved, in 5-second buckets. */
   transfers?: { tick: number; to: number; from: number; tiles: number }[];
   terrain: string | null;

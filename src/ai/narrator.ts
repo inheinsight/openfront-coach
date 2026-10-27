@@ -33,6 +33,19 @@ function digest(a: Analysis) {
       advice: m.suggestion,
       jev: m.jev ? { label: m.jev.label, confidence: m.jev.confidence, avoidable: m.evidence.jevAvoidable, lesson: m.evidence.jevLesson } : undefined,
     })),
+    economy: a.economy
+      ? {
+          incomeSources: a.economy.totals,
+          incomePerMinute: a.economy.incomeAt.map((x) => `${clock(x.sec * 10)} after spawn: you ${x.you === null ? "—" : Math.round(x.you)}, lobby median ${x.median === null ? "—" : Math.round(x.median)}, best ${x.best === null ? "—" : Math.round(x.best)} (${x.bestName ?? "—"})`),
+          spending: a.economy.spending,
+          buildOrder: a.economy.buildOrder.slice(0, 20).map((b) => `${clock(b.tick)} ${b.upgrade ? "upgrade " : ""}${b.unit} (${b.cost})${b.note ? ` — ${b.note}` : ""}`),
+          placements: a.economy.placements.map((p) => `${clock(p.tick)} ${p.type} [${p.verdict}]: ${p.notes.join("; ")}${p.better ? ` | better spot: ${p.better.why}` : ""}`),
+          warships: { ...a.economy.warships, reviews: a.economy.warships.reviews.map((w) => `${clock(w.tick)} warship [${w.verdict}]: ${w.note}`) },
+          strongestPlayer: a.economy.benchmark,
+          you: a.economy.you,
+          advice: a.economy.advice,
+        }
+      : undefined,
     strengths: a.strengths,
     weaknesses: a.weaknesses,
     drills: a.drills,
@@ -48,11 +61,13 @@ function digest(a: Analysis) {
 
 const INSTRUCTIONS = `You are an expert OpenFront.io coach writing a post-game debrief for the player ("you"). OpenFront is a browser territory-control strategy game (troops, gold, Cities, Ports, Defense Posts, SAMs, nukes, alliances, boats).
 
-Write the debrief in Markdown, 220-380 words, with exactly these sections:
+Write the debrief in Markdown, 300-480 words, with exactly these sections:
 ## The story of your game
 One short paragraph: how the game unfolded for you and what decided it.
 ## Three things to fix
 A numbered list of the three most important lessons. Each one cites a specific timestamp and number from the analysis, says why it mattered, and says exactly what to do instead next time.
+## Economy and buildings
+Two to four bullets on income and construction: whether Cities came at the right time, where Ports, Factories, Defense Posts and SAMs were placed and where they should have gone (use the "better spot" directions given), how income compared with the lobby, and warship use. Skip this section only if the analysis has no economy data.
 ## What to keep doing
 One or two sentences on what went well.
 ## Next game plan

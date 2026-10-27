@@ -4,8 +4,9 @@ import { computeMetrics, median, type PlayerMetrics } from "./metrics.js";
 import { detectMoments } from "./moments.js";
 import { ReplayView } from "./replayView.js";
 import { clock, fmtNum, pct, TICKS_PER_SECOND } from "./rules.js";
-import { coach, grade, scoreGame } from "./scoring.js";
+import { coach, grade, overallOf, scoreGame } from "./scoring.js";
 import { analyzeStatsOnly } from "./statsOnly.js";
+import { analyzeEconomy } from "./economy.js";
 import type { Analysis, BuildRow, KeyMoment, PlayerSummary } from "./types.js";
 
 export const ANALYSIS_VERSION = 1;
@@ -90,7 +91,50 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
 
   const myId = view.byClientID.get(me.clientID)?.id ?? null;
   const { moments, ledger } = detectMoments({ view, record, me, all, myId });
-  const { categories, overall: baseScore } = scoreGame(view, me, all, ledger);
+  // Economy, buildings and warships.
+  const econ = analyzeEconomy(view, record, meRec, me, all);
+  econ.moments.forEach((m, i) => moments.push({ id: `e${i + 1}`, ...m }));
+  moments.sort((a, b) => a.tick - b.tick);
+
+  const { categories } = scoreGame(view, me, all, ledger);
+  if (econ.report.placements.length || econ.report.buildOrder.length) {
+    const r = econ.report;
+    const counts = (v: string[]) => r.placements.filter((p) => v.includes(p.verdict)).length;
+    const lostEarly = r.placements.filter((p) => p.fate !== "kept" && p.endTick !== null && p.endTick - p.tick < 1500).length;
+    const ports = r.placements.filter((p) => p.type === "Port" && p.context?.trade);
+    const avgTrade = ports.length ? ports.reduce((a, p) => a + (p.context!.trade!.expGold), 0) / ports.length : null;
+    const inc10 = r.incomeAt.find((x) => x.sec === 600) ?? r.incomeAt[r.incomeAt.length - 1];
+    categories.splice(2, 0, {
+      key: "buildings",
+      label: "Buildings & placement",
+      score: r.score,
+      grade: grade(r.score),
+      summary:
+        r.score >= 75
+          ? "Strong: well-placed buildings that stayed yours."
+          : counts(["mistake", "blunder"])
+            ? `${counts(["mistake", "blunder"])} badly placed building${counts(["mistake", "blunder"]) > 1 ? "s" : ""}; see Economy & buildings.`
+            : "Room to improve where and when you build.",
+      metrics: [
+        { key: "placeGood", label: "Well-placed buildings", value: counts(["good", "brilliant"]), display: `${counts(["good", "brilliant"])} of ${r.placements.length}`, higherIsBetter: true },
+        { key: "placeBad", label: "Badly placed buildings", value: counts(["mistake", "blunder", "inaccuracy"]), display: String(counts(["mistake", "blunder", "inaccuracy"])), higherIsBetter: false },
+        { key: "lostEarly", label: "Lost within 2.5 min of building", value: lostEarly, display: String(lostEarly), higherIsBetter: false },
+        { key: "tradePerShip", label: "Expected gold per trade ship (your ports)", value: avgTrade, display: avgTrade === null ? "no ports" : fmtNum(avgTrade), higherIsBetter: true, hint: "From the engine's own partner weighting and route-length payout." },
+        {
+          key: "income10",
+          label: `Income per minute at ${inc10 ? clock(inc10.sec * TICKS_PER_SECOND) : "10:00"}`,
+          value: inc10?.you ?? null,
+          display: inc10?.you != null ? fmtNum(inc10.you) : "—",
+          median: inc10?.median ?? null,
+          medianDisplay: inc10?.median != null ? fmtNum(inc10.median) : undefined,
+          best: inc10?.best ?? null,
+          bestDisplay: inc10?.best != null ? fmtNum(inc10.best) : undefined,
+          higherIsBetter: true,
+        },
+      ],
+    });
+  }
+  const baseScore = overallOf(categories);
   const { strengths, weaknesses, drills } = coach(categories, moments, me);
 
   // ---- placement & leaderboard ------------------------------------------
@@ -261,6 +305,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   trendMetrics.peakLandShare = me.peakLandShare;
   trendMetrics.placement = myPlacement;
   trendMetrics.won = result === "victory" ? 1 : 0;
+  trendMetrics.placementScore = econ.report.score;
 
   const keyNumbers = keyNumbersFor(me, all, categories);
 
@@ -313,6 +358,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
     timeline,
     leaderboard: leaderboard.slice(0, 12).concat(leaderboard.slice(12).filter((l) => l.isMe)),
     narrative: null,
+    economy: econ.report,
     ai: { jev: { used: false }, narrator: { used: false } },
     trendMetrics,
   };

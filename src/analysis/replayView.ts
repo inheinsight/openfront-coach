@@ -63,11 +63,11 @@ export class ReplayView {
   }
 
   /** Full-length array aligned with `ticks` (zeros before the player appears). */
-  aligned(smallID: number, key: "tiles" | "troops" | "maxTroops" | "gold" | "goldEarned" | "alive" | "allies" | "attacksOut" | "attacksIn"): number[] {
+  aligned(smallID: number, key: "tiles" | "troops" | "maxTroops" | "gold" | "goldEarned" | "tradeGold" | "trainGold" | "piracyGold" | "alive" | "allies" | "attacksOut" | "attacksIn"): number[] {
     const s = this.series(smallID);
     const out = new Array(this.ticks.length).fill(0);
     if (!s) return out;
-    const arr = s[key];
+    const arr = s[key] ?? [];
     for (let i = 0; i < arr.length && s.from + i < out.length; i++) out[s.from + i] = arr[i] ?? 0;
     return out;
   }

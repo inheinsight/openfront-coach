@@ -198,6 +198,22 @@ td.r, th.r { text-align: right; }
 .mm-row { display: grid; grid-template-columns: 34px 44px 1fr; gap: 8px; align-items: center; width: 100%; text-align: left; background: none; border: none; border-radius: var(--radius); padding: 7px 6px; cursor: pointer; }
 .mm-row:hover, .mm-row.current { background: rgba(27, 52, 82, 0.7); }
 
+/* economy & buildings */
+.econ > .panel + .two-col, .econ > .two-col + .panel, .econ > .panel + .panel { margin-top: 20px; }
+.econ .two-col { margin-top: 20px; align-items: start; }
+.econ .two-col .panel + .panel { margin-top: 0; }
+.place-list { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 4px 16px; }
+.place-row { display: grid; grid-template-columns: 34px 44px 1fr; gap: 8px; align-items: start; width: 100%; text-align: left; background: none; border: none; border-radius: var(--radius); padding: 8px 6px; cursor: pointer; }
+.place-row:hover, .place-row.current { background: rgba(27, 52, 82, 0.7); }
+.place-notes { display: block; color: var(--paper-dim); font-size: 0.9rem; margin-top: 2px; }
+.place-better { display: block; color: var(--brilliant); font-size: 0.9rem; margin-top: 2px; }
+.source-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--abyss-2); }
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+.stat-row > div { display: flex; flex-direction: column; }
+.stat-row b { font-size: 1.6rem; }
+.advice { padding-left: 20px; margin: 8px 0 0; max-width: 80ch; }
+.advice li { margin-bottom: 8px; }
+
 /* map */
 .map-wrap { position: relative; background: var(--abyss-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .map-wrap canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }

@@ -113,7 +113,7 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
   const incomePerMin = (m: PlayerMetrics) => m.goldEarned / Math.max(1, m.lifeTicks / TICKS_PER_SECOND / 60);
   const survival = (m: PlayerMetrics) => (m.alive ? 1 : m.lifeTicks / Math.max(1, view.data.meta.ticks - m.spawnPhaseEndTick));
 
-  const defs: Record<CategoryScore["key"], { label: string; metrics: MetricDef[] }> = {
+  const defs: Partial<Record<CategoryScore["key"], { label: string; metrics: MetricDef[] }>> = {
     expansion: {
       label: "Expansion",
       metrics: [
@@ -189,7 +189,7 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
 
   const categories: CategoryScore[] = [];
   const allLines: (MetricLine & { score: number | null })[] = [];
-  for (const [key, def] of Object.entries(defs) as [CategoryScore["key"], (typeof defs)[CategoryScore["key"]]][]) {
+  for (const [key, def] of Object.entries(defs) as [CategoryScore["key"], { label: string; metrics: MetricDef[] }][]) {
     if (!relevant(key)) continue;
     const lines = def.metrics.map((d) => ({ d, l: line(d, me, all) }));
     const scored = lines.filter((x) => x.l.score !== null);
@@ -217,10 +217,15 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
     });
   }
 
-  const weights: Record<string, number> = { expansion: 1.3, economy: 1.1, troops: 1.2, combat: 0.9, defense: 1.1, diplomacy: 0.4, naval: 0.5, nuclear: 0.5 };
-  const wsum = categories.reduce((a, c) => a + (weights[c.key] ?? 1), 0);
-  let overall = categories.reduce((a, c) => a + c.score * (weights[c.key] ?? 1), 0) / Math.max(1, wsum);
-  return { categories, overall: Math.round(overall), lines: allLines };
+  return { categories, overall: overallOf(categories), lines: allLines };
+}
+
+const WEIGHTS: Record<string, number> = { expansion: 1.3, economy: 1.1, buildings: 0.9, troops: 1.2, combat: 0.9, defense: 1.1, diplomacy: 0.4, naval: 0.5, nuclear: 0.5 };
+
+/** Weighted average of the category scores. */
+export function overallOf(categories: CategoryScore[]): number {
+  const wsum = categories.reduce((a, c) => a + (WEIGHTS[c.key] ?? 1), 0);
+  return Math.round(categories.reduce((a, c) => a + c.score * (WEIGHTS[c.key] ?? 1), 0) / Math.max(1, wsum));
 }
 
 /** Turn scores and moments into strengths, weaknesses and drills. */
@@ -300,6 +305,17 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
           target: 0.2,
         });
       }
+    }
+    if (c.key === "buildings" && c.score < 70) {
+      const bad = c.metrics.find((m) => m.key === "placeBad")?.value ?? 0;
+      add({
+        title: "Place every building where it earns and survives",
+        why: `${bad} of your buildings were in poor spots or lost soon after you built them (see Economy & buildings for each one).`,
+        how: "Cities, Silos and Factories go deep inside your land, 40+ tiles from any enemy border. Ports go on the stretch of coast farthest from other players' ports (routes under 300 tiles pay little). Defense Posts go within 30 tiles of the border facing your strongest neighbour. SAMs go where they cover your Cities. Factories need 2+ of your Cities or Ports within 110 tiles.",
+        goal: "No building lost within 2.5 minutes, and no badly placed buildings.",
+        metricKey: "placeBad",
+        target: 0,
+      });
     }
     if (c.key === "combat" && c.score < 65) {
       add({

@@ -11,6 +11,15 @@ OpenFront's terms forbid real-time assistance, so the coach never reads or shows
 - **Key moments and map replay.** Each moment explains what happened, why it mattered and what to do instead. Selecting one jumps a territory-map replay to that point.
   - Detected moment types: slow openings, attacks that went badly, idle armies sitting at the troop cap, empty armies caught under attack, territory collapses (with who did it and why), big pushes, banked gold, late Cities, betrayals, nukes without SAM cover, lost transports.
 - **Scorecard.** Expansion, economy, troop management, combat, defense, diplomacy, naval and nuclear play, each scored 0–100. Scores compare you with every other human in the same lobby and with absolute targets taken from the engine's own formulas.
+- **Economy and buildings.**
+  - Every building you placed gets a verdict on the map, with a suggested better spot when there was one:
+    - Cities and Silos: the safest interior point at the time.
+    - Ports: the stretch of your coast with the best expected gold per trade ship, computed with the engine's own trade-partner weighting and route-length payout.
+    - Defense Posts: the border facing your strongest neighbour.
+  - It shows what happened to each building: kept, captured (including by naval landings) or nuked.
+  - Build timing: how long you sat on the gold before buying, and whether your army was at its cap when you bought a City.
+  - Income by source over time compared with the lobby, and your build order next to the strongest player's.
+  - Warship patrols, warship losses, and who captured your trade ships.
 - **Attack ledger and build order.** Every attack: troops sent, share of your army, the defender's army, troops used, tiles taken, efficiency.
 - **Progress.** Trends across games for the numbers that matter, with goals from your drills.
 - **Ask the coach.** Ask follow-up questions about a game, for example "why did I collapse at 7:58?".

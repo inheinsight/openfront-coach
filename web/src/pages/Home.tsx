@@ -101,7 +101,7 @@ export function Home({ games, health, refresh }: { games: GameSummary[]; health:
               </div>
               <div className="log-meta spark">
                 {g.result && <div className={`result-${g.result}`}>{RESULT_LABEL[g.result] ?? g.result}</div>}
-                {g.placement && <div>#{g.placement} of {g.placement_of}</div>}
+                {g.placement && <div>#{g.placement} of {g.placement_of}{g.mode === "Team" ? " teams" : ""}</div>}
               </div>
               <div className="log-meta">{when(g.started_at ?? g.created_at)}</div>
             </Link>

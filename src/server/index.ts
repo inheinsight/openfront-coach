@@ -4,7 +4,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import { deleteGame, getGame, getSettings, learnIdentity, listGames, loadAnalysis, trends, updateSettings, type Identity } from "../db/db.js";
 import { bus, enqueue, startWorker, syncFromPublicId } from "../jobs/pipeline.js";
-import { loadCachedReplay } from "../engine/replay.js";
+import { loadAnyReplay } from "../engine/replay.js";
 import { importRecordFile } from "../openfront/api.js";
 import { isGameId, parseGameId } from "../openfront/ids.js";
 import crypto from "node:crypto";
@@ -173,13 +173,15 @@ app.delete("/api/games/:id", (req, res) => {
 
 /** Ownership frames for the map viewer. */
 app.get("/api/games/:id/map", (req, res) => {
-  const replay = loadCachedReplay(req.params.id);
+  const replay = loadAnyReplay(req.params.id);
   const analysis = loadAnalysis(req.params.id);
   if (!replay) return void res.status(404).json({ error: "no replay for this game" });
   const tracked = new Set(Object.keys(replay.samples.series).map(Number));
   res.json({
     width: replay.meta.frameWidth,
     height: replay.meta.frameHeight,
+    frameEvery: replay.meta.frameEvery,
+    ticks: replay.meta.ticks,
     terrain: replay.terrain,
     frames: replay.frames,
     me: analysis?.me.smallID ?? null,

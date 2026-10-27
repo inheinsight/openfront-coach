@@ -32,6 +32,8 @@ export interface KeyMoment {
   /** Change in your share of the land over the following minute, in percentage points. */
   landShareDelta?: number;
   evidence: Record<string, string | number | boolean | null>;
+  /** Other players involved (small IDs), highlighted on the map. */
+  focus?: number[];
   jev?: JevVerdict;
 }
 

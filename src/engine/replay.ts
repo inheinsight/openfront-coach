@@ -81,6 +81,19 @@ export function loadCachedReplay(gameId: string): ReplayData | null {
   return JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString("utf8")) as ReplayData;
 }
 
+/** The newest cached replay of any harness version (for the map viewer). */
+export function loadAnyReplay(gameId: string): ReplayData | null {
+  assertGameId(gameId);
+  if (!fs.existsSync(config.replaysDir)) return null;
+  const files = fs
+    .readdirSync(config.replaysDir)
+    .map((f) => ({ f, v: Number(f.match(new RegExp(`^${gameId}\\.h(\\d+)\\.json\\.gz$`))?.[1] ?? NaN) }))
+    .filter((x) => Number.isFinite(x.v))
+    .sort((a, b) => b.v - a.v);
+  if (!files.length) return null;
+  return JSON.parse(zlib.gunzipSync(fs.readFileSync(insideDir(config.replaysDir, files[0].f))).toString("utf8")) as ReplayData;
+}
+
 /** Only complete replays on the game's own build are worth keeping. */
 function isComplete(d: ReplayData, record: GameRecord) {
   return d.meta.engineCommit === record.gitCommit && !d.meta.stoppedEarly && !d.meta.desync;

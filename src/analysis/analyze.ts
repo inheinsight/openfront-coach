@@ -247,7 +247,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   let headline: string;
   if (result === "victory") headline = `Victory on ${record.info.config.gameMap} — you finished with ${pct(me.finalLandShare, 1)} of the map.`;
   else if (result === "eliminated")
-    headline = `Eliminated at ${clock(me.eliminatedTick ?? 0)} after peaking at ${pct(me.peakLandShare, 1)} of the map` + (myPlacement ? ` (placed #${myPlacement} of ${leaderboard.length}).` : ".");
+    headline = `Eliminated at ${clock(me.eliminatedTick ?? 0)} after peaking at ${pct(me.peakLandShare, 1)} of the map` + (myPlacement ? ` (${placementUnit === "teams" ? `your team placed #${myPlacement} of ${placementOf} teams` : `placed #${myPlacement} of ${placementOf}`}).` : ".");
   else if (truncated) headline = `Analysis covers the first ${clock(replay.meta.ticks)} of the game; you held ${pct(me.finalLandShare, 1)} of the map by then` + (winner ? ` and ${winner} went on to win.` : ".");
   else headline = `Survived to the end with ${pct(me.finalLandShare, 1)} of the map` + (winner ? `; ${winner} won.` : ".");
   if (biggest) headline += ` Biggest swing: ${lc(biggest.title)} at ${clock(biggest.tick)}.`;

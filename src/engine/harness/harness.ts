@@ -195,8 +195,8 @@ async function main() {
   // --- sampling ------------------------------------------------------------
   const numTicks = turns.length;
   const sampleEvery = Math.max(10, Math.ceil(numTicks / 700 / 10) * 10);
-  const frameEvery = input.frameEvery ?? 300;
-  const frameScale = Math.max(1, Math.ceil(W / (input.frameMaxWidth ?? 360)));
+  const frameEvery = input.frameEvery ?? 200;
+  const frameScale = Math.max(1, Math.ceil(W / (input.frameMaxWidth ?? 800)));
   const FW = Math.ceil(W / frameScale);
   const FH = Math.ceil(H / frameScale);
 

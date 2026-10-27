@@ -129,6 +129,7 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
         m: moment({
           tick: a.startTick,
           kind: "attack",
+          focus: a.target ? [a.target] : [],
           severity: verdict,
           title:
             verdict === "good"
@@ -319,10 +320,12 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       10 * SEC,
     );
     for (const r of overRuns.slice(0, 2)) {
+      const hitters = [...new Set(view.data.attacks.filter((a) => a.target === sid && a.startTick <= r.end && (a.endTick ?? a.lastTick) >= r.start).map((a) => a.attacker))];
       moments.push(
         moment({
           tick: r.start,
           kind: "troops",
+          focus: hitters.slice(0, 3),
           severity: "mistake",
           title: "Caught with an empty army",
           detail: `At ${clock(r.start)} you were under attack by ${fmtNum(inc[r.i0])} troops while holding only ${fmtNum(troops[r.i0])} (${pct(troops[r.i0] / Math.max(1, maxT[r.i0]))} of your cap).`,
@@ -377,6 +380,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       moment({
         tick: t0,
         kind: "collapse",
+        focus: [...new Set([...(main ? [main[0]] : []), ...takers.slice(0, 2).map((t) => t.to)])],
         severity,
         title: `Lost ${pct(d.drop)} of your territory in a minute`,
         detail: `${clock(t0)}–${clock(t1)}: ${causes.join("; ") || "pressure on several fronts"}.`,
@@ -418,6 +422,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       moment({
         tick: t0,
         kind: "surge",
+        focus: conquered.map((c) => view.byId.get(c.conqueredId as string)).filter((v) => v && v.type !== "Bot").map((v) => v!.smallID),
         severity: g.gain > view.landTiles * 0.05 ? "brilliant" : "good",
         title: `Big push: +${pct(g.gain / view.landTiles, 1)} of the map in a minute`,
         detail: `${clock(t0)}–${clock(t1)}` + (() => {
@@ -507,6 +512,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
         moment({
           tick: e.tick,
           kind: "diplomacy",
+          focus: [e.betrayedID as number],
           severity: d > 1 ? "good" : d < -1 ? "mistake" : "inaccuracy",
           title: `You betrayed ${view.name(e.betrayedID as number)}`,
           detail: `Breaking the alliance marked you a traitor for 30s (attackers lose half as many troops against you) and soured every neighbour's opinion of you. Your land share moved ${d >= 0 ? "+" : ""}${d.toFixed(1)} points over the next 90s.`,
@@ -521,6 +527,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
         moment({
           tick: e.tick,
           kind: "diplomacy",
+          focus: [e.traitorID as number],
           severity: "info",
           title: `${view.name(e.traitorID as number)} broke your alliance`,
           detail: `Your army was at ${pct(ratio)} of its cap when it happened.` + (ratio < 0.25 ? " Hard and Impossible nations betray allies whose troops fall below about 20% of their cap." : ""),
@@ -590,6 +597,10 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       moment({
         tick: me.eliminatedTick,
         kind: "death",
+        focus: (() => {
+          const k = killer ? view.byClientID.get(killer)?.smallID : undefined;
+          return [...new Set([...(k ? [k] : []), ...takers.slice(0, 2).map((t) => t.to)])];
+        })(),
         severity: "info",
         title: "Eliminated",
         detail: `You were knocked out at ${clock(me.eliminatedTick)}` + (killerName ? `, mostly by ${killerName}.` : ".") + ` You peaked at ${pct(me.peakLandShare, 1)} of the map.`,

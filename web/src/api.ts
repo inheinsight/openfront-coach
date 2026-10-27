@@ -44,6 +44,8 @@ export interface Health {
 export interface MapData {
   width: number;
   height: number;
+  frameEvery?: number;
+  ticks?: number;
   terrain: string | null;
   frames: { tick: number; data: string }[];
   me: number | null;

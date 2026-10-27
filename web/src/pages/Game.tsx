@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type Analysis, type GameSummary } from "../api";
 import { Markdown } from "../components/Markdown";
-import { MapViewer } from "../components/MapViewer";
-import { Moments, SeverityCounts } from "../components/Moments";
+import { MapMoments } from "../components/MapMoments";
+import { SeverityCounts } from "../components/Moments";
 import { Scorecard } from "../components/Scorecard";
 import { FrontLine, GoldChart, TroopChart } from "../components/Timeline";
 import { clock, fmtNum, gradeColor, GLYPH, pct, RESULT_LABEL, scoreColor, STATUS_LABEL } from "../format";
@@ -11,7 +11,7 @@ import { Link, navigate } from "../router";
 type Tab = "debrief" | "moments" | "scorecard" | "attacks" | "economy" | "ask";
 const TABS: { key: Tab; label: string }[] = [
   { key: "debrief", label: "Debrief" },
-  { key: "moments", label: "Key moments & map" },
+  { key: "moments", label: "Map & key moments" },
   { key: "scorecard", label: "Scorecard" },
   { key: "attacks", label: "Attack ledger" },
   { key: "economy", label: "Troops & economy" },
@@ -62,7 +62,6 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
   const select = (mid: string, tick: number) => {
     setSelected({ id: mid, tick });
     if (tab !== "moments") setTab("moments");
-    setTimeout(() => document.getElementById(`moment-${mid}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
   };
   const durationMin = Math.round(a.game.durationTicks / 600);
 
@@ -154,23 +153,14 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
         </div>
 
         {tab === "debrief" && <DebriefTab a={a} onSelect={select} />}
-        {tab === "moments" && (
-          <div className="moments-layout">
-            <div className="panel" style={{ padding: "8px 14px" }}>
-              <Moments analysis={a} selected={selected.id} onSelect={(mid, tick) => setSelected({ id: mid, tick })} />
+        {tab === "moments" &&
+          (a.timeline ? (
+            <MapMoments analysis={a} selectedId={selected.id} onSelect={(mid, tick) => setSelected({ id: mid, tick })} />
+          ) : (
+            <div className="panel">
+              <p className="muted">This game has no replay, so there's no map. Its key moments are listed in the debrief.</p>
             </div>
-            <div className="moments-map">
-              {a.timeline ? (
-                <>
-                  <MapViewer gameId={a.gameId} tick={selected.tick} />
-                  <p className="small muted" style={{ marginTop: 8 }}>Your territory is gold. Selecting a moment shows the map right after it.</p>
-                </>
-              ) : (
-                <p className="muted">No map for stats-only analyses.</p>
-              )}
-            </div>
-          </div>
-        )}
+          ))}
         {tab === "scorecard" && <div className="panel"><Scorecard analysis={a} /></div>}
         {tab === "attacks" && <AttackTab a={a} />}
         {tab === "economy" && (

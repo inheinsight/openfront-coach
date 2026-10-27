@@ -105,7 +105,8 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
 
   // Elimination: last sample alive, if not alive at the end.
   let eliminatedTick: number | null = null;
-  const aliveAtEnd = fin?.alive ?? alive[alive.length - 1] === 1;
+  // Zero territory at the end is an elimination, whatever the alive flag says.
+  const aliveAtEnd = (fin?.alive ?? alive[alive.length - 1] === 1) && (fin?.tiles ?? tiles[tiles.length - 1] ?? 0) > 0;
   if (!aliveAtEnd) {
     let last = -1;
     for (let i = 0; i < alive.length; i++) if (alive[i]) last = i;

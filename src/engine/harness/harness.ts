@@ -53,7 +53,9 @@ function safe<T>(fn: () => T, fallback: T): T {
   }
 }
 function jsonSafe(v: unknown): unknown {
-  return JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x)));
+  if (v === undefined) return undefined;
+  const s = JSON.stringify(v, (_k, x) => (typeof x === "bigint" ? x.toString() : x));
+  return s === undefined ? undefined : JSON.parse(s);
 }
 /** Enum member name for a value, for numeric and string enums alike. */
 const enumName = (e: Any, v: unknown): string => {
@@ -326,6 +328,7 @@ async function main() {
       const list = ups[(GameUpdateType as Any)[name]];
       if (!Array.isArray(list)) continue;
       for (const u of list) {
+        if (!u || typeof u !== "object") continue;
         if (name === "EmbargoEvent") {
           const hs = humanSmallIDs();
           if (!hs.has(u.playerID) && !hs.has(u.embargoedID)) continue;
@@ -550,7 +553,7 @@ async function main() {
     const hs = humanSmallIDs();
     for (const gu of pending.splice(0)) {
       safe(() => applyTileUpdates(after, gu?.packedTileUpdates, hs), undefined);
-      collectUpdates(after, gu);
+      safe(() => collectUpdates(after, gu), undefined);
     }
     if (desync && !input.allowDesync) {
       stoppedEarly = `desync at tick ${desync.tick}`;

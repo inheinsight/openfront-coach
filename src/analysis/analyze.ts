@@ -89,7 +89,8 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   const elimTick = new Map<number, number>();
   for (const p of view.trackedPlayers()) {
     const alive = view.aligned(p.smallID, "alive");
-    if (finals.get(p.smallID)?.alive) continue;
+    const f = finals.get(p.smallID);
+    if (f?.alive && f.tiles > 0) continue;
     let last = -1;
     for (let i = 0; i < alive.length; i++) if (alive[i]) last = i;
     elimTick.set(p.smallID, last >= 0 ? view.ticks[last] : 0);
@@ -102,7 +103,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
       const peak = Math.max(0, ...(view.series(p.smallID)?.tiles ?? [0]));
       return {
         p,
-        alive: f?.alive ?? false,
+        alive: (f?.alive ?? false) && (f?.tiles ?? 0) > 0,
         tiles: f?.tiles ?? 0,
         peak,
         elim: elimTick.get(p.smallID) ?? null,

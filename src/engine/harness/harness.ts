@@ -299,7 +299,13 @@ async function main() {
     for (const name of keepUpdate) {
       const list = ups[(GameUpdateType as Any)[name]];
       if (!Array.isArray(list)) continue;
-      for (const u of list) events.push({ tick, kind: name, ...(jsonSafe(u) as object), type: undefined });
+      for (const u of list) {
+        if (name === "EmbargoEvent") {
+          const hs = humanSmallIDs();
+          if (!hs.has(u.playerID) && !hs.has(u.embargoedID)) continue;
+        }
+        events.push({ tick, kind: name, ...(jsonSafe(u) as object), type: undefined });
+      }
     }
     const disp = ups[(GameUpdateType as Any).DisplayEvent];
     if (Array.isArray(disp) && disp.length) {
@@ -328,17 +334,24 @@ async function main() {
     }
   }
 
-  // --- attacks (humans' outgoing) --------------------------------------------
+  // --- attacks (any attack a human sends or receives) -------------------------
   const openAttacks = new Map<string, Any>();
   const attacks: Any[] = [];
   function trackAttacks(tick: number) {
     const seen = new Set<string>();
-    for (const p of humans()) {
-      for (const a of safe(() => p.outgoingAttacks(), [] as Any[])) {
+    for (const h of humans()) {
+      const involving = [
+        ...safe(() => h.outgoingAttacks(), [] as Any[]),
+        ...safe(() => h.incomingAttacks(), [] as Any[]),
+      ];
+      for (const a of involving) {
         const id = a.id();
+        if (seen.has(id)) continue;
         seen.add(id);
+        const p = a.attacker();
         let rec = openAttacks.get(id);
         if (!rec) {
+          describe(p);
           const target = a.target();
           const tIsPlayer = safe(() => target.isPlayer(), false);
           rec = {

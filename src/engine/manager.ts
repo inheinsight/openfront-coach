@@ -16,7 +16,7 @@ import * as esbuild from "esbuild";
 import { config, ROOT_DIR } from "../config.js";
 
 const exec = promisify(execFile);
-const HARNESS_VERSION = 4; // bump when harness.ts changes so cached bundles rebuild
+const HARNESS_VERSION = 5; // bump when harness.ts changes so cached bundles rebuild
 
 async function git(cwd: string, ...args: string[]) {
   const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });

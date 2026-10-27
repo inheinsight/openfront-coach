@@ -18,7 +18,7 @@ OpenFront's terms forbid real-time assistance, so the coach never reads or shows
 
 ## Run it
 
-Requirements: macOS or Linux, Node.js 20.19+, git. Optional: [Claude Code](https://claude.com/claude-code) logged in (for written debriefs), and a TypeSafe API key (for Jev).
+Requirements: macOS or Linux, Node.js 24 LTS (pinned in `.node-version`; 20.19+ still works), git. Optional: [Claude Code](https://claude.com/claude-code) logged in (for written debriefs), and a TypeSafe API key (for Jev).
 
 ```bash
 npm run setup

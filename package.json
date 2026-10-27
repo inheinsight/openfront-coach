@@ -1,0 +1,44 @@
+{
+  "name": "openfront-coach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Post-game coach for OpenFront.io: replays your finished games and tells you what to do better.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "setup": "npm install && npm run build:web",
+    "start": "tsx src/server/index.ts",
+    "dev": "concurrently -k \"tsx watch src/server/index.ts\" \"vite --config web/vite.config.ts\"",
+    "build:web": "vite build --config web/vite.config.ts",
+    "coach": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^18.0.9",
+    "esbuild": "^0.28.2",
+    "express": "^5.3.0",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.19.43",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.2.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12"
+  }
+}

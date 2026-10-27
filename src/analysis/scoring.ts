@@ -78,6 +78,7 @@ function line(def: MetricDef, me: PlayerMetrics, all: PlayerMetrics[]): MetricLi
   };
 }
 
+const lcFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 const share = (v: number) => pct(v, v < 0.01 ? 2 : 1);
 const secs = (v: number) => clock(v * TICKS_PER_SECOND);
 
@@ -204,10 +205,10 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
       grade: grade(score),
       summary:
         score >= 75
-          ? `Strong — ${best.l.label.toLowerCase()} was ${best.l.display}.`
+          ? `Strong: ${lcFirst(best.l.label)} was ${best.l.display}.`
           : score >= 55
-            ? `Solid, with room to improve ${worst.l.label.toLowerCase()} (${worst.l.display}).`
-            : `Weak spot — ${worst.l.label.toLowerCase()} was ${worst.l.display}.`,
+            ? `Solid, with room to improve ${lcFirst(worst.l.label)} (${worst.l.display}).`
+            : `Weak spot: ${lcFirst(worst.l.label)} was ${worst.l.display}.`,
       metrics: lines.map(({ l }) => {
         const { score: _s, ...rest } = l;
         return rest;
@@ -229,10 +230,10 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
   const weaknesses: string[] = [];
   for (const c of [...categories].sort((a, b) => b.score - a.score)) {
     if (c.key === "nuclear" && me.nukesLaunched === 0) continue;
-    if (c.score >= 72 && strengths.length < 3) strengths.push(`${c.label} (${c.grade}): ${c.summary.replace(/^Strong — /, "")}`);
+    if (c.score >= 72 && strengths.length < 3) strengths.push(`${c.label} (${c.grade}): ${c.summary.replace(/^Strong: /, "")}`);
   }
   for (const c of [...categories].sort((a, b) => a.score - b.score)) {
-    if (c.score < 60 && weaknesses.length < 3) weaknesses.push(`${c.label} (${c.grade}): ${c.summary.replace(/^Weak spot — /, "")}`);
+    if (c.score < 60 && weaknesses.length < 3) weaknesses.push(`${c.label} (${c.grade}): ${c.summary.replace(/^Weak spot: /, "")}`);
   }
 
   const drills: Drill[] = [];
@@ -311,7 +312,7 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
   if (!drills.length) {
     const worst = moments.find((m) => m.severity === "blunder" || m.severity === "mistake");
     drills.push({
-      title: worst ? `Fix: ${worst.title.toLowerCase()}` : "Push for the win earlier",
+      title: worst ? `Fix this: ${worst.title}` : "Push for the win earlier",
       why: worst ? worst.detail : "Your fundamentals were strong across the board.",
       how: worst?.suggestion ?? "Look for the moment the leader over-commits and hit their weakest border with a full stack.",
       goal: "Repeat this game's score with one fewer mistake.",

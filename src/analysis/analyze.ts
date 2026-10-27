@@ -56,6 +56,9 @@ function winnerName(record: GameRecord, view: ReplayView | null): string | null 
   return w[1];
 }
 
+/** Lower-case only the first letter, so player names inside titles keep their case. */
+const lc = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
 function downsample<T>(arr: T[], idx: number[]): T[] {
   return idx.map((i) => arr[i]);
 }
@@ -142,11 +145,18 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   const tracked = view.trackedPlayers();
   const shares = new Map(tracked.map((p) => [p.smallID, view.aligned(p.smallID, "tiles")]));
   const rankSeries = view.ticks.map((_, i) => 1 + tracked.filter((p) => p.smallID !== me.smallID && (shares.get(p.smallID)?.[i] ?? 0) > myTiles[i]).length);
-  const rivals = tracked
+  // Rivals: whoever hit you hardest first, then the biggest players.
+  const pressure = new Map<number, number>();
+  for (const at of replay.attacks) if (at.target === me.smallID) pressure.set(at.attacker, (pressure.get(at.attacker) ?? 0) + at.troops);
+  const byPressure = [...pressure.entries()].sort((a, b) => b[1] - a[1]).map(([sid]) => sid).filter((sid) => shares.has(sid));
+  const byPeak = tracked
     .filter((p) => p.smallID !== me.smallID)
     .map((p) => ({ p, peak: Math.max(0, ...(shares.get(p.smallID) ?? [0])) }))
     .sort((a, b) => b.peak - a.peak)
-    .slice(0, 4)
+    .map((x) => x.p.smallID);
+  const rivalIds = [...new Set([...byPressure.slice(0, 2), ...byPeak])].slice(0, 4);
+  const rivals = rivalIds
+    .map((sid) => ({ p: view.bySmallID.get(sid)! }))
     .map(({ p }) => ({ name: p.name, smallID: p.smallID, type: p.type, landShare: downsample(shares.get(p.smallID)!, idx).map((t) => +(t / land).toFixed(5)) }));
   const leader = view.ticks.map((_, i) => Math.max(0, ...tracked.map((p) => shares.get(p.smallID)?.[i] ?? 0)) / land);
 
@@ -201,7 +211,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
       startTick: ph.startTick,
       endTick: ph.endTick,
       grade: grade(score),
-      note: `${pct(startShare, 1)} → ${pct(endShare, 1)} of the map.` + (worst ? ` Key mistake: ${worst.title.toLowerCase()}.` : best ? ` Highlight: ${best.title.toLowerCase()}.` : ""),
+      note: `${pct(startShare, 1)} → ${pct(endShare, 1)} of the map.` + (worst ? ` Key mistake: ${lc(worst.title)}.` : best ? ` Highlight: ${lc(best.title)}.` : ""),
     };
   });
 
@@ -213,7 +223,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   else if (result === "eliminated")
     headline = `Eliminated at ${clock(me.eliminatedTick ?? 0)} after peaking at ${pct(me.peakLandShare, 1)} of the map` + (myPlacement ? ` (placed #${myPlacement} of ${leaderboard.length}).` : ".");
   else headline = `Survived to the end with ${pct(me.finalLandShare, 1)} of the map` + (winner ? `; ${winner} won.` : ".");
-  if (biggest) headline += ` Biggest swing: ${biggest.title.toLowerCase()} at ${clock(biggest.tick)}.`;
+  if (biggest) headline += ` Biggest swing: ${lc(biggest.title)} at ${clock(biggest.tick)}.`;
 
   const counts = { humans: humans.length, nations: replay.players.filter((p) => p.type === "Nation").length };
   const trendMetrics: Record<string, number | null> = { overall };

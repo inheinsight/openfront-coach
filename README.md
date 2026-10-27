@@ -71,7 +71,12 @@ openfront.io ──(game ID, after you play)──▶ extension ──▶ local 
 1. **Exact replay.** OpenFront's simulation is deterministic within a build, and every archived record names the commit that played it. The coach makes a sparse, shallow checkout of that commit's engine packages and map files, bundles a small harness against them with esbuild, and re-runs the game.
    - It checks each checkpoint hash the live clients agreed on, so the replay is the game that was actually played.
    - A 25-player, 12-minute public game replays in about 20 seconds.
-2. **Sandbox.** The downloaded engine runs in a child process under Node's permission model. It can read only its own bundle, the map and the record, can write only the replay output, and can't spawn processes.
+2. **Sandbox.** The downloaded engine runs in a child process with three layers of protection:
+   - An empty environment, so it never sees your API keys or shell secrets.
+   - Node's permission model: it can read only its own bundle, the map and the record, can write only its one output file, and can't spawn processes.
+   - An OS sandbox with no network at all: `sandbox-exec` on macOS, `unshare -rn` on Linux.
+
+   Engines are only fetched for commits from OpenFront's archive, or, for imported records, commits on OpenFront's main or release branches. A watchdog stops any replay that stalls.
 3. **Measurement.** The harness samples every human and nation (territory, troops, troop cap, gold, units, attacks) and records your intents with their context, such as your army and the defender's when you attacked. It credits every captured tile to the attack that took it, using the engine's own tile updates.
 4. **Coaching rules.** The rules come from the engine's formulas. Two examples:
    - Troop regen is `(10 + troops^0.73/4) · (1 − troops/cap)`, which peaks at 42% of the cap.
@@ -100,6 +105,8 @@ Useful scripts:
 - `node scripts/extension-sim.mjs <game url> <username> [publicId]`: run the real extension code against the coach.
 
 Data (SQLite database, cached records, engine builds, replays) lives in `./data`.
+
+The API listens on 127.0.0.1 only. It accepts requests addressed to `localhost`, and browser requests only from the dashboard itself. The extension may only report games and read their status. Every other write needs the per-install token in `data/api-token`, which the server injects into the dashboard page.
 
 ## License
 

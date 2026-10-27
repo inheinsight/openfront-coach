@@ -5,7 +5,7 @@ import zlib from "node:zlib";
 import { config } from "../config.js";
 import type { GameRecord } from "../openfront/types.js";
 import type { ReplayData } from "./replayTypes.js";
-import { builtEngines, ensureEngine, ensureMap, UnsupportedEngineLayout } from "./manager.js";
+import { builtEngines, ensureEngine, ensureMap, HARNESS_VERSION, UnsupportedEngineLayout } from "./manager.js";
 
 export interface ReplayProgress {
   stage: "engine" | "map" | "simulate" | "done";
@@ -36,7 +36,7 @@ export function sandboxFlags(opts: { read: string[]; write: string[] }): string[
 }
 
 function replayPath(gameId: string) {
-  return path.join(config.replaysDir, `${gameId}.json.gz`);
+  return path.join(config.replaysDir, `${gameId}.h${HARNESS_VERSION}.json.gz`);
 }
 
 export function loadCachedReplay(gameId: string): ReplayData | null {

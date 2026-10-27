@@ -6,6 +6,7 @@ import { deleteGame, getGame, getSettings, learnIdentity, listGames, loadAnalysi
 import { bus, enqueue, startWorker, syncFromPublicId } from "../jobs/pipeline.js";
 import { loadCachedReplay } from "../engine/replay.js";
 import { importRecordFile } from "../openfront/api.js";
+import { parseGameId } from "../openfront/ids.js";
 import { jevAvailable } from "../ai/jev.js";
 import { askCoach } from "../ai/narrator.js";
 import { execFileSync } from "node:child_process";
@@ -29,13 +30,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
-
-const GAME_ID = /^[A-Za-z0-9_-]{4,40}$/;
-function parseGameId(input: string): string | null {
-  const s = input.trim();
-  const m = s.match(/(?:game|replay-viewer=|join=|replay\.[^/]+\/)\/?([A-Za-z0-9_-]{6,40})/) ?? s.match(/^([A-Za-z0-9_-]{6,40})$/);
-  return m && GAME_ID.test(m[1]) ? m[1] : null;
-}
 
 let claudeAvailable: boolean | null = null;
 function hasClaude() {

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon48.png" alt="" width="22" height="22" />
+      <strong>OpenFront Coach</strong>
+      <span id="conn" class="conn">Checking…</span>
+    </header>
+    <p id="who" class="muted"></p>
+    <section id="games"></section>
+    <footer>
+      <a id="open" href="#">Open the dashboard</a>
+      <details>
+        <summary>Coach address</summary>
+        <input id="url" placeholder="http://127.0.0.1:5317" />
+        <button id="save">Save</button>
+      </details>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

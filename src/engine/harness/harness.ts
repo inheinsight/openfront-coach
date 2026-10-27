@@ -138,6 +138,32 @@ async function main() {
   const H = game.height();
   const totalLand = safe(() => game.numLandTiles(), 0);
 
+  // --- exact tile transfers ------------------------------------------------
+  // The engine reports every tile whose state changed as (tile, state) pairs;
+  // the owner is the low 12 bits. Tracking owners lets us credit each
+  // captured tile to the attack that took it.
+  const owners = new Uint16Array(W * H);
+  for (let i = 0; i < W * H; i++) owners[i] = game.ownerID(i);
+  let tickTransfers = new Map<string, number>(); // "to:from" -> tiles, this tick
+  const transferLog = new Map<string, number>(); // "bucket:to:from" -> tiles, humans involved
+  const TRANSFER_BUCKET = 50; // 5 s
+  function applyTileUpdates(tick: number, packed: Uint32Array | undefined, humanIds: Set<number>) {
+    if (!packed) return;
+    for (let i = 0; i + 1 < packed.length; i += 2) {
+      const tile = packed[i];
+      const owner = packed[i + 1] & 0xfff;
+      const prev = owners[tile];
+      if (prev === owner) continue;
+      owners[tile] = owner;
+      const k = `${owner}:${prev}`;
+      tickTransfers.set(k, (tickTransfers.get(k) ?? 0) + 1);
+      if (humanIds.has(owner) || humanIds.has(prev)) {
+        const bk = `${Math.floor(tick / TRANSFER_BUCKET) * TRANSFER_BUCKET}:${k}`;
+        transferLog.set(bk, (transferLog.get(bk) ?? 0) + 1);
+      }
+    }
+  }
+
   // --- players -----------------------------------------------------------
   const humanByClient = new Map<string, Any>();
   for (const p of record.info.players) humanByClient.set(p.clientID, p);
@@ -368,6 +394,7 @@ async function main() {
             targetTroopsStart: tIsPlayer ? Math.round(target.troops()) : 0,
             minTroops: Math.round(a.troops()),
             retreated: false,
+            tilesCaptured: 0,
           };
           openAttacks.set(id, rec);
           if (tIsPlayer) describe(target);
@@ -378,11 +405,25 @@ async function main() {
         if (safe(() => a.retreating(), false)) rec.retreated = true;
       }
     }
+    // Credit this tick's captures to the open attacks, split evenly when one
+    // attacker has several attacks on the same target.
+    const byPair = new Map<string, Any[]>();
+    for (const rec of openAttacks.values()) {
+      const k = `${rec.attacker}:${rec.target}`;
+      byPair.set(k, [...(byPair.get(k) ?? []), rec]);
+    }
+    for (const [k, recs] of byPair) {
+      const n = tickTransfers.get(k);
+      if (!n) continue;
+      for (const rec of recs) rec.tilesCaptured = (rec.tilesCaptured ?? 0) + n / recs.length;
+    }
+    tickTransfers = new Map();
     for (const [id, rec] of openAttacks) {
       if (seen.has(id)) continue;
       openAttacks.delete(id);
       const attacker = game.playerBySmallID(rec.attacker);
       rec.endTick = tick;
+      rec.tilesCaptured = Math.round(rec.tilesCaptured ?? 0);
       rec.attackerTilesEnd = safe(() => attacker.numTilesOwned(), 0);
       if (rec.target) {
         const t = game.playerBySmallID(rec.target);
@@ -506,7 +547,11 @@ async function main() {
       break;
     }
     const after = safe(() => game.ticks(), i + 1);
-    for (const gu of pending.splice(0)) collectUpdates(after, gu);
+    const hs = humanSmallIDs();
+    for (const gu of pending.splice(0)) {
+      safe(() => applyTileUpdates(after, gu?.packedTileUpdates, hs), undefined);
+      collectUpdates(after, gu);
+    }
     if (desync && !input.allowDesync) {
       stoppedEarly = `desync at tick ${desync.tick}`;
       break;
@@ -587,6 +632,10 @@ async function main() {
     attacks,
     actions,
     events,
+    transfers: [...transferLog.entries()].map(([k, tiles]) => {
+      const [tick, to, from] = k.split(":").map(Number);
+      return { tick, to, from, tiles };
+    }),
     terrain,
     frames,
     militaryUnits: MILITARY_UNITS,

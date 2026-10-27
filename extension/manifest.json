@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "OpenFront Coach",
+  "version": "0.1.0",
+  "description": "Records which OpenFront games you play so your local coach can review them after they end. Shows nothing during a match.",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "OpenFront Coach" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "notifications", "alarms", "webRequest"],
+  "host_permissions": [
+    "*://openfront.io/*",
+    "*://*.openfront.io/*",
+    "http://127.0.0.1:5317/*",
+    "http://localhost:5317/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://openfront.io/*", "*://*.openfront.io/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

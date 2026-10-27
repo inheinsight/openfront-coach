@@ -107,6 +107,18 @@ export class ReplayView {
     return best;
   }
 
+  /** Who took tiles from `smallID` in a window: exact when the harness logged transfers, else from frames. */
+  takenFrom(smallID: number, fromTick: number, toTick: number): { to: number; cells: number }[] {
+    const log = this.data.transfers;
+    if (!log) return this.tileTransfers(smallID, fromTick, toTick + 300);
+    const counts = new Map<number, number>();
+    for (const t of log) {
+      if (t.from !== smallID || t.tick < fromTick - 50 || t.tick > toTick) continue;
+      counts.set(t.to, (counts.get(t.to) ?? 0) + t.tiles);
+    }
+    return [...counts.entries()].map(([to, cells]) => ({ to, cells })).sort((x, y) => y.cells - x.cells);
+  }
+
   /** Who took tiles from `smallID` between two frames (approximate, from downsampled frames). */
   tileTransfers(smallID: number, fromTick: number, toTick: number): { to: number; cells: number }[] {
     const a = this.frame(Math.max(0, this.frameIndexAt(fromTick)));

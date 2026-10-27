@@ -24,6 +24,7 @@ export const config = {
   openfrontApi: env("OPENFRONT_API") ?? "https://api.openfront.io",
   publicId: env("OPENFRONT_PUBLIC_ID"),
   typesafeApiKey: env("TYPESAFE_API_KEY"),
+  typesafeBaseUrl: env("TYPESAFE_BASE_URL"),
   jevModel: env("JEV_MODEL") ?? "jev-latest",
   narrator: (env("NARRATOR") ?? "claude-cli") as "claude-cli" | "off",
   claudeModel: env("CLAUDE_MODEL") ?? "haiku",

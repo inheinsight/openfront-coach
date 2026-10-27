@@ -43,7 +43,8 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
     const used = Math.max(0, a.troops - (a.lastTroops ?? 0));
     const gain = Math.max(0, (a.attackerTilesEnd ?? a.attackerTilesStart) - a.attackerTilesStart);
     const loss = a.target ? Math.max(0, a.targetTilesStart - (a.targetTilesEnd ?? a.targetTilesStart)) : gain;
-    return used > 0 ? (Math.min(gain, loss) / used) * 1000 : null;
+    const taken = a.tilesCaptured ?? Math.min(gain, loss);
+    return used > 0 ? (taken / used) * 1000 : null;
   };
   const isMerged = (a: AttackRecord) => ((a.endTick ?? a.lastTick) - a.startTick) / SEC < 2 && Math.max(0, a.troops - (a.lastTroops ?? 0)) < 0.3 * a.troops;
   const lobby = view.data.attacks
@@ -54,6 +55,7 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
   const q = (p: number) => (lobby.length ? lobby[Math.min(lobby.length - 1, Math.floor(p * lobby.length))] : null);
   const p25 = q(0.25);
   const p75 = q(0.75);
+  const peers = humanIds.size > 1 ? "of this lobby" : "of your attacks this game";
   const flagged: { sev: Severity; score: number; m: KeyMoment }[] = [];
 
   for (const a of mine) {
@@ -62,7 +64,8 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
     const troopsUsed = Math.max(0, a.troops - (a.lastTroops ?? 0));
     const ownGain = Math.max(0, (a.attackerTilesEnd ?? a.attackerTilesStart) - a.attackerTilesStart);
     const targetLoss = a.target ? Math.max(0, a.targetTilesStart - (a.targetTilesEnd ?? a.targetTilesStart)) : ownGain;
-    const tilesGained = a.target ? Math.min(ownGain, targetLoss) : ownGain;
+    // Exact captures when the harness recorded them; otherwise estimate from net tile changes.
+    const tilesGained = a.tilesCaptured ?? (a.target ? Math.min(ownGain, targetLoss) : ownGain);
     const tpk = troopsUsed > 0 ? (tilesGained / troopsUsed) * 1000 : null;
     const isPlayer = a.targetType === "Human" || a.targetType === "Nation";
     const durationS = Math.max(0, (a.endTick ?? a.lastTick) - a.startTick) / SEC;
@@ -84,7 +87,7 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
       } else if (tpk !== null && p25 !== null && tpk < p25 && significant && tilesGained < Math.max(30, a.targetTilesStart * 0.1)) {
         verdict = ratio !== null && ratio >= 0.6 && !a.naval ? "blunder" : a.naval ? "inaccuracy" : "mistake";
         note =
-          `spent ${fmtNum(troopsUsed)} troops for ${fmtNum(tilesGained)} tiles (${tpk.toFixed(1)} per 1k, bottom quarter of this lobby)` +
+          `spent ${fmtNum(troopsUsed)} troops for ${fmtNum(tilesGained)} tiles (${tpk.toFixed(1)} per 1k, bottom quarter ${peers})` +
           (stackVsArmy < 0.5 ? `; your ${fmtNum(a.troops)} stack was ${pct(stackVsArmy)} of their ${fmtNum(a.targetTroopsStart)} army, and stacks below ~60% of the defender's army pay up to double losses per tile` : "") +
           (ratio !== null && ratio >= 0.6 ? `; it was a ${pct(ratio)} send` : "");
       } else if (ratio !== null && ratio >= 0.6 && a.startTick > me.spawnPhaseEndTick + 600 && significant && tilesGained < a.targetTilesStart * 0.25) {
@@ -92,7 +95,7 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
         note = `full send (${pct(ratio)} of your troops) left you at ${pct(a.attackerTroopsAfterLaunch / Math.max(1, before))} and took only ${fmtNum(tilesGained)} tiles`;
       } else if (tpk !== null && p75 !== null && tpk >= p75 && tilesGained > view.landTiles * 0.002) {
         verdict = "good";
-        note = `efficient: ${tpk.toFixed(0)} tiles per 1k troops (top quarter of this lobby)`;
+        note = `efficient: ${tpk.toFixed(0)} tiles per 1k troops (top quarter ${peers})`;
       }
     } else if (a.targetType === "TerraNullius") {
       note = "expansion into unclaimed land";
@@ -351,7 +354,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
     used.add(d.i);
     const t0 = ticks[d.i];
     const t1 = ticks[d.i + win];
-    const takers = view.tileTransfers(sid, t0, t1 + 300).filter((x) => x.to !== 0);
+    const takers = view.takenFrom(sid, t0, t1).filter((x) => x.to !== 0);
     const attackers = view.data.attacks.filter((a) => a.target === sid && a.startTick <= t1 && (a.endTick ?? a.lastTick) >= t0);
     const byAttacker = new Map<number, number>();
     for (const a of attackers) byAttacker.set(a.attacker, (byAttacker.get(a.attacker) ?? 0) + a.troops);
@@ -580,7 +583,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
   // ---- Outcome -------------------------------------------------------------
   if (me.eliminatedTick !== null) {
     const t0 = Math.max(spEnd, me.eliminatedTick - 120 * SEC);
-    const takers = view.tileTransfers(sid, t0, me.eliminatedTick).filter((x) => x.to !== 0);
+    const takers = view.takenFrom(sid, t0, me.eliminatedTick).filter((x) => x.to !== 0);
     const killer = ctx.record.info.players.find((p) => p.clientID === me.clientID)?.stats?.killedBy;
     const killerName = killer ? view.byClientID.get(killer)?.name : takers[0] ? view.name(takers[0].to) : null;
     moments.push(

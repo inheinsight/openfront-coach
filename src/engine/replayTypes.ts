@@ -46,6 +46,8 @@ export interface AttackRecord {
   lastTroops: number;
   minTroops: number;
   retreated: boolean;
+  /** Tiles this attack took from its target (exact, from the engine's tile updates). */
+  tilesCaptured?: number;
 }
 
 export interface ActionContext {
@@ -132,6 +134,8 @@ export interface ReplayData {
   attacks: AttackRecord[];
   actions: ActionContext[];
   events: ReplayEvent[];
+  /** Tiles changing hands where a human is involved, in 5-second buckets. */
+  transfers?: { tick: number; to: number; from: number; tiles: number }[];
   terrain: string | null;
   frames: { tick: number; data: string }[];
   militaryUnits: string[];

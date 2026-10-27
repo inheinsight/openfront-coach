@@ -15,7 +15,9 @@
     "build:web": "vite build --config web/vite.config.ts",
     "coach": "tsx src/cli.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:integration": "OPENFRONT_INTEGRATION=1 vitest run tests/integration.test.ts",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",

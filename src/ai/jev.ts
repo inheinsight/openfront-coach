@@ -55,6 +55,7 @@ export interface JevSummary {
 function client() {
   return new TypeSafeClient({
     apiKey: config.typesafeApiKey,
+    ...(config.typesafeBaseUrl ? { baseURL: config.typesafeBaseUrl } : {}),
     defaultModel: config.jevModel,
     timeout: 20_000,
     retry: { maxRetries: 2 },
@@ -131,7 +132,8 @@ export async function judgeWithJev(analysis: Analysis): Promise<JevSummary> {
       const sev = r.answers.severity;
       const label = sev.choice as Severity;
       const diff = Math.abs(RANK[label] - RANK[m.severity]);
-      const adopt = (sev.confidence >= 0.6 && diff <= 1) || sev.confidence >= 0.85;
+      // The further Jev's label is from the rules', the surer it must be.
+      const adopt = diff <= 1 ? sev.confidence >= 0.6 : diff === 2 ? sev.confidence >= 0.85 : sev.confidence >= 0.95;
       m.jev = {
         label,
         confidence: +sev.confidence.toFixed(3),

@@ -53,8 +53,9 @@ function line(def: MetricDef, me: PlayerMetrics, all: PlayerMetrics[]): MetricLi
   const v = def.get(me);
   const vals = all.map((m) => def.get(m)).filter((x): x is number => x !== null && Number.isFinite(x));
   const others = all.filter((m) => m.smallID !== me.smallID).map((m) => def.get(m)).filter((x): x is number => x !== null && Number.isFinite(x));
-  const best = vals.length ? (def.higherIsBetter ? Math.max(...vals) : Math.min(...vals)) : null;
-  const med = median(vals);
+  // Lobby context only means something with other humans to compare against.
+  const best = others.length >= 2 && vals.length ? (def.higherIsBetter ? Math.max(...vals) : Math.min(...vals)) : null;
+  const med = others.length >= 2 ? median(vals) : null;
   const pctile = v !== null && others.length >= 3 ? percentileOf(v, others, def.higherIsBetter) : null;
   const abs = def.absolute ? curve(v, def.absolute) : null;
   let score: number | null = null;
@@ -104,7 +105,7 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
     const rows = m.smallID === me.smallID ? ledger : null;
     const list = (rows ?? view.data.attacks.filter((a) => a.attacker === m.smallID).map((a) => {
       const used = Math.max(0, a.troops - (a.lastTroops ?? 0));
-      const gain = Math.max(0, Math.min((a.attackerTilesEnd ?? a.attackerTilesStart) - a.attackerTilesStart, a.target ? a.targetTilesStart - (a.targetTilesEnd ?? a.targetTilesStart) : Infinity));
+      const gain = a.tilesCaptured ?? Math.max(0, Math.min((a.attackerTilesEnd ?? a.attackerTilesStart) - a.attackerTilesStart, a.target ? a.targetTilesStart - (a.targetTilesEnd ?? a.targetTilesStart) : Infinity));
       return { targetType: a.targetType, tilesPer1kTroops: used > 0 ? (gain / used) * 1000 : null };
     })).filter((r) => (r.targetType === "Human" || r.targetType === "Nation") && r.tilesPer1kTroops !== null);
     return list.length >= 2 ? median(list.map((r) => r.tilesPer1kTroops as number)) : null;

@@ -300,9 +300,9 @@ function keyNumbersFor(me: PlayerMetrics, all: PlayerMetrics[], categories: Anal
     label: "Actions per minute",
     value: me.actionsPerMinute,
     display: me.actionsPerMinute.toFixed(1),
-    median: median(others.map((o) => o.actionsPerMinute)),
+    median: others.length >= 2 ? median(others.map((o) => o.actionsPerMinute)) : null,
     medianDisplay: (() => {
-      const m = median(others.map((o) => o.actionsPerMinute));
+      const m = others.length >= 2 ? median(others.map((o) => o.actionsPerMinute)) : null;
       return m === null ? undefined : m.toFixed(1);
     })(),
     higherIsBetter: true,

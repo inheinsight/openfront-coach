@@ -35,6 +35,11 @@ function App() {
     );
   }, [refresh]);
 
+  // Re-read the list when coming back to it (a game may have been removed).
+  useEffect(() => {
+    if (path === "/") refresh();
+  }, [path, refresh]);
+
   const gameMatch = path.match(/^\/game\/([A-Za-z0-9_-]+)/);
   const nav = [
     { to: "/", label: "Games", active: path === "/" || !!gameMatch },

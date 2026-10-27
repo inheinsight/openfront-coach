@@ -266,18 +266,40 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
       });
     }
     if (c.key === "economy" && c.score < 70) {
+      // Drill whichever economy measure is actually weakest.
+      const weakest = [...c.metrics].filter((m) => m.value !== null).sort((x, y) => (x.percentile ?? 50) - (y.percentile ?? 50));
       const fc = val("firstCity");
-      add({
-        title: fc !== null && fc > 180 ? "First City by 2:30" : "Spend your gold",
-        why:
-          fc !== null && fc > 180
-            ? `Your first City came at ${fc >= 9999 ? "never" : secs(fc)}. A level-1 City adds 250k to your troop cap, which more than doubles an early army.`
-            : `Your gold sat at ${lines.find((x) => x.m.key === "float")?.m.display ?? "—"} on average.`,
-        how: "Build a City the moment you hit 125k gold, in your interior. After that, alternate City upgrades with Ports on long coastal trade routes (300+ tiles pays far better than short hops).",
-        goal: fc !== null && fc > 180 ? "First City within 2:30 of spawn." : "Average unspent gold under 2 minutes of income.",
-        metricKey: fc !== null && fc > 180 ? "firstCity" : "float",
-        target: fc !== null && fc > 180 ? 150 : 2,
-      });
+      const fl = val("float");
+      const lateCity = fc !== null && fc > 170;
+      const hoarding = fl !== null && fl > 2.5;
+      if (lateCity) {
+        add({
+          title: "First City by 2:30",
+          why: `Your first City came at ${fc >= 9999 ? "never" : secs(fc)}. A level-1 City adds 250k to your troop cap, which more than doubles an early army.`,
+          how: "Build a City the moment you have 125k gold (about two minutes of income), somewhere in your interior, then keep upgrading Cities as gold comes in.",
+          goal: "First City within 2:30 of spawn.",
+          metricKey: "firstCity",
+          target: 150,
+        });
+      } else if (hoarding) {
+        add({
+          title: "Spend your gold",
+          why: `Your gold sat at ${lines.find((x) => x.m.key === "float")?.m.display ?? "—"} on average. Banked gold does nothing.`,
+          how: "Whenever you can afford the next City level, a Defense Post on a threatened border or (from minute 5) a SAM, buy it. Only bank when you are saving for a specific nuke.",
+          goal: "Average unspent gold under 2 minutes of income.",
+          metricKey: "float",
+          target: 2,
+        });
+      } else if (weakest[0]?.key === "tradeShare" || weakest[0]?.key === "goldPerMin") {
+        add({
+          title: "Grow income beyond the base 60k a minute",
+          why: `Only ${lines.find((x) => x.m.key === "tradeShare")?.m.display ?? "—"} of your gold came from trade and trains; base income alone is 60k a minute.`,
+          how: "If your land touches the coast, build a Port: trade ships between ports 300+ tiles apart pay both owners, and short routes pay very little. Factories connect Cities by rail, and every train stop pays out. Taking land from bots and nations also hands you their gold.",
+          goal: "At least 20% of your gold from trade and trains.",
+          metricKey: "tradeShare",
+          target: 0.2,
+        });
+      }
     }
     if (c.key === "combat" && c.score < 65) {
       add({

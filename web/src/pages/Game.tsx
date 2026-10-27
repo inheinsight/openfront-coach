@@ -125,6 +125,14 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
         <div className="row small">
           <a href={`https://openfront.io/#replay-viewer=${a.gameId}`} target="_blank" rel="noreferrer">Watch the replay on OpenFront</a>
           <button className="btn" onClick={() => api.reanalyze(a.gameId).then(() => navigate(`/game/${a.gameId}`))}>Re-analyze</button>
+          <button
+            className="btn"
+            onClick={() => {
+              if (window.confirm("Remove this game from your history?")) api.remove(a.gameId).then(() => navigate("/"));
+            }}
+          >
+            Remove
+          </button>
         </div>
       </aside>
 

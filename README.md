@@ -28,7 +28,7 @@ npm run setup
 npm start
 ```
 
-Then open http://localhost:5317.
+Then open http://localhost:5317. On a Mac you can instead double-click **OpenFront Coach.command** in Finder, which starts the coach and opens the dashboard.
 
 Copy `.env.example` to `.env` to configure the coach. Every setting is optional:
 

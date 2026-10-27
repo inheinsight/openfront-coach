@@ -131,7 +131,7 @@ export function Home({ games, health, refresh }: { games: GameSummary[]; health:
           <h3>Your OpenFront history</h3>
           {settings?.publicId ? (
             <>
-              <p>Signed in as public ID <code>{settings.publicId}</code>. New games are imported every 10 minutes{settings.autoSync ? "" : " (paused in Settings)"}.</p>
+              <p>Following public ID <code>{settings.publicId}</code>. {settings.autoSync ? "New games are imported every 10 minutes." : "Automatic import is paused in Settings."}</p>
               <button className="btn" disabled={busy} onClick={sync}>Import recent games now</button>
             </>
           ) : (

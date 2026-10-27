@@ -139,6 +139,8 @@ export interface Analysis {
     result: "victory" | "defeat" | "eliminated" | "survived" | "left";
     placement: number | null;
     placementOf: number;
+    /** "teams" in team games: your team's rank. */
+    placementUnit?: "players" | "teams";
     eliminatedTick: number | null;
     finalLandShare: number;
     peakLandShare: number;

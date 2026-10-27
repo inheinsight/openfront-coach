@@ -31,7 +31,7 @@ export function makeChrome({ fetchImpl = fetch } = {}) {
       onStartup: { addListener: (f) => listeners.startup.push(f) },
     },
     webRequest: { onBeforeRequest: { addListener: (f) => listeners.webRequest.push(f) } },
-    alarms: { create: () => {}, onAlarm: { addListener: (f) => listeners.alarm.push(f) } },
+    alarms: { get: async () => undefined, create: () => {}, onAlarm: { addListener: (f) => listeners.alarm.push(f) } },
     notifications: {
       create: (id, opts) => notifications.push({ id, ...opts }),
       onClicked: { addListener: (f) => listeners.notifClick.push(f) },

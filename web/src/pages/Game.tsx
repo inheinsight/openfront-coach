@@ -76,7 +76,7 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
           </div>
           <div className={`num result-${a.me.result}`} style={{ fontSize: "1.4rem", marginTop: 6 }}>
             {RESULT_LABEL[a.me.result]}
-            {a.me.placement ? <span className="muted"> #{a.me.placement} of {a.me.placementOf}</span> : null}
+            {a.me.placement ? <span className="muted"> #{a.me.placement} of {a.me.placementOf}{a.me.placementUnit === "teams" ? " teams" : ""}</span> : null}
           </div>
           <dl style={{ marginTop: 14 }}>
             <dt>Player</dt><dd className="c-you" style={{ color: "var(--you)" }}>{a.me.name}</dd>

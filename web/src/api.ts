@@ -62,10 +62,16 @@ export interface TrendRow {
   metrics: Record<string, number | null>;
 }
 
+// The server puts this install's API token in the page; writes must send it.
+const TOKEN = document.querySelector<HTMLMetaElement>('meta[name="coach-token"]')?.content ?? "";
+
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body) headers["Content-Type"] = "application/json";
+  if (TOKEN && method !== "GET") headers["X-Coach-Token"] = TOKEN;
   const res = await fetch(url, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));

@@ -643,7 +643,7 @@ async function main() {
     frames,
     militaryUnits: MILITARY_UNITS,
   };
-  fs.mkdirSync(path.dirname(input.outPath), { recursive: true });
+  // The sandbox only allows writing this one file; its directory already exists.
   fs.writeFileSync(input.outPath, zlib.gzipSync(JSON.stringify(out)));
   report({ type: "done", outPath: input.outPath, elapsedMs: Date.now() - t0, stoppedEarly });
 }

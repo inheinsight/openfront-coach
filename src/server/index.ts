@@ -6,7 +6,8 @@ import { deleteGame, getGame, getSettings, learnIdentity, listGames, loadAnalysi
 import { bus, enqueue, startWorker, syncFromPublicId } from "../jobs/pipeline.js";
 import { loadCachedReplay } from "../engine/replay.js";
 import { importRecordFile } from "../openfront/api.js";
-import { parseGameId } from "../openfront/ids.js";
+import { isGameId, parseGameId } from "../openfront/ids.js";
+import crypto from "node:crypto";
 import { jevAvailable } from "../ai/jev.js";
 import { askCoach } from "../ai/narrator.js";
 import { execFileSync } from "node:child_process";
@@ -15,19 +16,61 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64mb" }));
 
-// Only this dashboard (same origin) and the coach's Chrome extension may call
-// the API from a browser. Any other web page gets no CORS headers, so it
-// can't read responses or send JSON requests to your local coach.
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = req.headers.origin;
-  if (origin && origin.startsWith("chrome-extension://")) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    if (req.method === "OPTIONS") return void res.sendStatus(204);
-  } else if (origin && !origin.startsWith(`http://localhost:${config.port}`) && !origin.startsWith(`http://127.0.0.1:${config.port}`)) {
-    if (req.method !== "GET") return void res.status(403).json({ error: "origin not allowed" });
+// ---- access control ------------------------------------------------------
+// The API listens on 127.0.0.1 only, and on top of that:
+// - the Host header must be localhost/127.0.0.1 (stops DNS-rebinding pages);
+// - a browser Origin must be exactly this dashboard (or the Vite dev server);
+// - Chrome extensions may only report games and read their status;
+// - every other write needs this install's token, which only the dashboard
+//   page (same origin) can read.
+const TOKEN_FILE = path.join(config.dataDir, "api-token");
+function loadToken(): string {
+  try {
+    const t = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+    if (/^[0-9a-f]{64}$/.test(t)) return t;
+  } catch {
+    // create below
   }
+  const t = crypto.randomBytes(32).toString("hex");
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  fs.writeFileSync(TOKEN_FILE, t, { mode: 0o600 });
+  return t;
+}
+const TOKEN = loadToken();
+const HOSTS = new Set([`localhost:${config.port}`, `127.0.0.1:${config.port}`]);
+const ORIGINS = new Set([`http://localhost:${config.port}`, `http://127.0.0.1:${config.port}`, "http://localhost:5318", "http://127.0.0.1:5318"]);
+const EXTENSION_ROUTES: [string, RegExp][] = [
+  ["GET", /^\/api\/health$/],
+  ["POST", /^\/api\/games\/track$/],
+  ["GET", /^\/api\/games\/[A-Za-z0-9_-]{4,40}$/],
+];
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (!HOSTS.has(String(req.headers.host ?? ""))) return void res.status(403).json({ error: "unexpected host" });
+  const origin = req.headers.origin;
+  if (origin?.startsWith("chrome-extension://")) {
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST");
+      return void res.sendStatus(204);
+    }
+    if (!EXTENSION_ROUTES.some(([m, re]) => m === req.method && re.test(req.path))) return void res.status(403).json({ error: "not available to extensions" });
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    return next();
+  }
+  if (origin && !ORIGINS.has(origin)) return void res.status(403).json({ error: "origin not allowed" });
+  const write = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+  // Reporting a game is harmless (it only queues an archive lookup), so local
+  // tools may do it without the token; everything else that writes needs it.
+  if (write && req.path !== "/api/games/track" && req.get("x-coach-token") !== TOKEN) {
+    return void res.status(403).json({ error: "missing or wrong coach token; reload the dashboard" });
+  }
+  next();
+});
+
+app.param("id", (req, res, next, id) => {
+  if (!isGameId(id)) return void res.status(400).json({ error: "invalid game id" });
   next();
 });
 
@@ -176,7 +219,12 @@ app.get("/api/events", (req, res) => {
 // Dashboard
 if (fs.existsSync(config.webDistDir)) {
   app.use(express.static(config.webDistDir, { index: false, maxAge: "1h" }));
-  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(config.webDistDir, "index.html")));
+  const indexHtml = () =>
+    fs.readFileSync(path.join(config.webDistDir, "index.html"), "utf8").replace("</head>", `<meta name="coach-token" content="${TOKEN}" /></head>`);
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(indexHtml());
+  });
 } else {
   app.get("/", (_req, res) => res.type("text").send("Dashboard not built yet. Run: npm run build:web"));
 }

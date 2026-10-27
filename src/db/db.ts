@@ -130,7 +130,9 @@ export function getGame(gameId: string): GameRow | undefined {
 export function upsertGameRequest(gameId: string, source: string, identity: Identity, opts: { force?: boolean; waitForArchive?: boolean } = {}): GameRow {
   const now = Date.now();
   const existing = getGame(gameId);
-  if (existing && !opts.force && existing.status !== "error") {
+  // Without force, an existing game (including one that failed) is left as
+  // is: reporting it again must not re-run a failed analysis every minute.
+  if (existing && !opts.force) {
     // Merge in any identity we didn't have.
     const merged = { ...JSON.parse(existing.identity_json || "{}"), ...Object.fromEntries(Object.entries(identity).filter(([, v]) => v)) };
     getDb().prepare("UPDATE games SET identity_json = ?, updated_at = ? WHERE game_id = ?").run(JSON.stringify(merged), now, gameId);

@@ -60,4 +60,25 @@ describe("extension", () => {
     await ext.alarm();
     expect(ext.notifications).toHaveLength(1);
   });
+
+  it("resends a missed game once the coach is up, then stops", async () => {
+    let up = false;
+    const calls: string[] = [];
+    const impl = async (url: string, init?: { method?: string }) => {
+      if (!up) throw new Error("ECONNREFUSED");
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/api/games/track")) return new Response("{}", { status: 200 });
+      return new Response(JSON.stringify({ summary: { status: "waiting_archive" } }), { status: 200 });
+    };
+    ext = loadExtension({ url: "https://openfront.io/game/Miss1234", localStorage: { username: "Me" }, fetchImpl: impl });
+    await wait(200);
+    expect(ext.store.games.Miss1234.sent).toBe(false);
+    up = true;
+    await ext.alarm();
+    await ext.alarm();
+    await ext.alarm();
+    expect(calls.filter((c) => c.startsWith("POST")).length).toBe(1);
+    expect(ext.store.games.Miss1234.sent).toBe(true);
+  });
 });
+

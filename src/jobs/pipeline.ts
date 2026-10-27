@@ -76,13 +76,26 @@ async function processGame(row: GameRow) {
   let replay = null;
   let note: string | null = null;
   try {
-    const res = await replayGame(record, (p) => {
-      if (p.stage === "simulate") update(id, { stage: "Re-simulating the game", progress: p.percent ?? 0 });
-      else if (p.message) update(id, { stage: p.message });
-    });
+    const res = await replayGame(
+      record,
+      (p) => {
+        if (p.stage === "simulate") update(id, { stage: "Re-simulating the game", progress: p.percent ?? 0 });
+        else if (p.message) update(id, { stage: p.message });
+      },
+      { untrustedRecord: row.source === "import" },
+    );
     replay = res.data;
-    if (!res.exactBuild) note = `replayed with engine ${replay.meta.engineCommit.slice(0, 9)} instead of the game's own build; results after the first desync are approximate`;
-    if (replay.meta.desync) note = `the replay drifted from the real game at ${Math.round(replay.meta.desync.tick / 10)}s; analysis after that point is approximate`;
+    const at = (tick: number) => `${Math.floor(tick / 600)}:${String(Math.floor(tick / 10) % 60).padStart(2, "0")}`;
+    if (!res.exactBuild) note = `replayed with engine ${replay.meta.engineCommit.slice(0, 9)} instead of the game's own build, so results after the first drift are approximate`;
+    if (replay.meta.desync) {
+      note = res.exactBuild
+        ? `the replay drifted from the real game at ${at(replay.meta.desync.tick)}, so the analysis stops there`
+        : `the replay drifted from the real game at ${at(replay.meta.desync.tick)}; everything after that is approximate`;
+    } else if (replay.meta.stoppedEarly) {
+      note = `the replay stopped early at ${at(replay.meta.ticks)} (${replay.meta.stoppedEarly}); results come from the game record and timings cover only that part`;
+    } else if (replay.meta.hashesChecked === 0) {
+      note = "this record has no checkpoint hashes, so the replay couldn't be verified against the real game";
+    }
   } catch (e) {
     note = e instanceof UnsupportedEngineLayout ? e.message : `replay failed (${(e instanceof Error ? e.message : String(e)).slice(0, 200)})`;
   }

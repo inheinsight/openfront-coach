@@ -16,7 +16,7 @@ import * as esbuild from "esbuild";
 import { config, ROOT_DIR } from "../config.js";
 
 const exec = promisify(execFile);
-export const HARNESS_VERSION = 7; // bump when harness.ts changes so cached bundles rebuild
+export const HARNESS_VERSION = 8; // bump when harness.ts changes so cached bundles rebuild
 
 async function git(cwd: string, ...args: string[]) {
   const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
@@ -75,14 +75,22 @@ export async function ensureMap(build: EngineBuild, gameMap: string): Promise<st
   const dirName = await mapDirName(build.srcDir, gameMap);
   return once(`map:${build.commit}:${dirName}`, async () => {
     const tree = await git(build.srcDir, "rev-parse", `HEAD:resources/maps/${dirName}`);
+    if (!/^[0-9a-f]{40}$/.test(tree)) throw new Error(`unexpected map tree id for ${dirName}`);
     const cached = path.join(config.dataDir, "maps", tree);
-    if (fs.existsSync(path.join(cached, "manifest.json"))) return cached;
+    if (fs.existsSync(path.join(cached, ".complete"))) return cached;
     await git(build.srcDir, "sparse-checkout", "add", `/resources/maps/${dirName}/`);
     const src = path.join(build.srcDir, "resources", "maps", dirName);
-    fs.mkdirSync(cached, { recursive: true });
+    // Copy into a temp dir and rename into place, so an interrupted copy
+    // never leaves a half-filled cache behind.
+    const tmp = `${cached}.tmp-${process.pid}-${Date.now()}`;
+    fs.mkdirSync(tmp, { recursive: true });
     for (const f of fs.readdirSync(src)) {
-      if (f.endsWith(".bin") || f === "manifest.json") fs.copyFileSync(path.join(src, f), path.join(cached, f));
+      if (f.endsWith(".bin") || f === "manifest.json") fs.copyFileSync(path.join(src, f), path.join(tmp, f));
     }
+    if (!fs.existsSync(path.join(tmp, "manifest.json"))) throw new Error(`map ${dirName} has no manifest`);
+    fs.writeFileSync(path.join(tmp, ".complete"), new Date().toISOString());
+    fs.rmSync(cached, { recursive: true, force: true });
+    fs.renameSync(tmp, cached);
     // Drop the working copy; the shared cache keeps the files.
     await git(build.srcDir, "sparse-checkout", "set", "--no-cone", ...SPARSE_BASE);
     return cached;
@@ -162,6 +170,48 @@ export function builtEngines(): string[] {
     .map((c) => ({ c, t: fs.statSync(path.join(config.enginesDir, c)).mtimeMs }))
     .sort((a, b) => b.t - a.t)
     .map((x) => x.c);
+}
+
+/**
+ * Is `commit` part of OpenFront's own history? GitHub serves commits from
+ * forks by SHA through the main repository, so a hand-made record could
+ * point the coach at arbitrary code. Records from OpenFront's archive are
+ * trusted; imported ones must name a commit reachable from main.
+ */
+export async function verifyUpstreamCommit(commit: string): Promise<boolean> {
+  if (!/^[0-9a-f]{7,40}$/.test(commit)) return false;
+  const marker = path.join(config.enginesDir, commit, ".verified-upstream");
+  if (fs.existsSync(marker)) return true;
+  const m = config.openfrontRepo.match(/github\.com\/([^/]+\/[^/.]+)/);
+  if (!m) return false;
+  const gh = (p: string) =>
+    fetch(`https://api.github.com/repos/${m[1]}/${p}`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "OpenFrontCoach" } });
+  try {
+    // Production builds come from release branches (v35, …), not only main.
+    const branches: string[] = ["main"];
+    const res = await gh("git/matching-refs/heads/v");
+    if (res.ok) {
+      const names = ((await res.json()) as { ref: string }[]).map((r) => r.ref.replace(/^refs\/heads\//, ""));
+      const releases = names
+        .filter((n) => /^v\d+$/.test(n))
+        .sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)))
+        .slice(0, 4);
+      branches.unshift(...releases);
+    }
+    for (const b of branches) {
+      const r = await gh(`compare/${encodeURIComponent(b)}...${commit}`);
+      if (!r.ok) continue;
+      const j = (await r.json()) as { status?: string };
+      if (j.status === "behind" || j.status === "identical") {
+        fs.mkdirSync(path.dirname(marker), { recursive: true });
+        fs.writeFileSync(marker, `${b} ${new Date().toISOString()}`);
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export async function latestUpstreamCommit(): Promise<string> {

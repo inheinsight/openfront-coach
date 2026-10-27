@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import type { GameListing, GameRecord, PlayerSession } from "./types.js";
+import { assertGameId, insideDir } from "./ids.js";
 
 // Client for OpenFront's documented public API (docs/API.md upstream).
 // Only finished games are archived there, so everything the coach reads is
@@ -38,7 +39,7 @@ async function getJson<T>(url: string, attempts = 3): Promise<T> {
 }
 
 function recordPath(gameId: string) {
-  return path.join(config.recordsDir, `${gameId.replace(/[^A-Za-z0-9_-]/g, "")}.json`);
+  return insideDir(config.recordsDir, `${assertGameId(gameId)}.json`);
 }
 
 /** Full game record (with turns). Cached on disk: archived games never change. */
@@ -56,7 +57,7 @@ export async function fetchGameRecord(gameId: string): Promise<GameRecord> {
     if ((e as { status?: number }).status === 404) throw new NotArchivedYet(gameId);
     throw e;
   }
-  if (!record?.info?.gameID || !Array.isArray(record.turns)) {
+  if (!record?.info?.gameID || !Array.isArray(record.turns) || record.info.gameID !== gameId) {
     throw new Error(`unexpected record shape for ${gameId}`);
   }
   await fs.mkdir(config.recordsDir, { recursive: true });
@@ -66,13 +67,16 @@ export async function fetchGameRecord(gameId: string): Promise<GameRecord> {
 
 export async function importRecordFile(file: string): Promise<GameRecord> {
   const record = JSON.parse(await fs.readFile(file, "utf8")) as GameRecord;
-  if (!record?.info?.gameID) throw new Error("not an OpenFront game record");
+  if (!record?.info?.gameID || !Array.isArray(record.turns)) throw new Error("not an OpenFront game record");
+  assertGameId(record.info.gameID);
+  if (typeof record.gitCommit !== "string" || !/^[0-9a-f]{7,40}$/.test(record.gitCommit)) throw new Error("record has no valid gitCommit");
   await fs.mkdir(config.recordsDir, { recursive: true });
   await fs.writeFile(recordPath(record.info.gameID), JSON.stringify(record));
   return record;
 }
 
 export async function isArchived(gameId: string): Promise<boolean> {
+  assertGameId(gameId);
   try {
     await getJson(`${config.openfrontApi}/public/game/${encodeURIComponent(gameId)}?turns=false`, 1);
     return true;

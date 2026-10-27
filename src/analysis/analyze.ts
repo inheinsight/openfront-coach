@@ -79,6 +79,15 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   const me = all.find((m) => m.clientID === meRec.clientID);
   if (!me) return analyzeStatsOnly(record, meRec, "You never spawned in this game, so there is nothing to replay.");
 
+  // A replay that ended early (desync on the exact build, engine error) only
+  // covers part of the game: the outcome comes from the record instead.
+  const truncated = replay.meta.ticks < record.info.num_turns - 100;
+  if (truncated) {
+    const killedAt = meRec.stats?.killedAt ? Number(meRec.stats.killedAt) : null;
+    me.alive = killedAt === null;
+    me.eliminatedTick = killedAt;
+  }
+
   const myId = view.byClientID.get(me.clientID)?.id ?? null;
   const { moments, ledger } = detectMoments({ view, record, me, all, myId });
   const { categories, overall: baseScore } = scoreGame(view, me, all, ledger);
@@ -123,14 +132,30 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
     eliminatedTick: r.elim,
     placement: i + 1,
   }));
-  // A winner is first even if the record's final tiles say otherwise (e.g. team wins).
-  const myPlacement = leaderboard.find((l) => l.isMe)?.placement ?? null;
   const result = resultFor(record, meRec, me.team, me.alive);
+  // Placement: in team games, your team's rank (winning team first, then by
+  // territory); otherwise your own rank, with the winner always first.
+  const teamMode = record.info.config.gameMode === "Team" && me.team !== null;
+  let myPlacement = leaderboard.find((l) => l.isMe)?.placement ?? null;
+  let placementOf = leaderboard.length;
+  let placementUnit: "players" | "teams" = "players";
+  if (teamMode) {
+    const teams = new Map<string, number>();
+    for (const l of leaderboard) if (l.team) teams.set(l.team, (teams.get(l.team) ?? 0) + l.finalTiles);
+    const w = record.info.winner;
+    const winTeam = w && w[0] === "team" ? w[1] : null;
+    const order = [...teams.entries()].sort((a, b) => (a[0] === winTeam ? -1 : b[0] === winTeam ? 1 : b[1] - a[1]));
+    myPlacement = order.findIndex(([t]) => t === me.team) + 1 || null;
+    placementOf = order.length;
+    placementUnit = "teams";
+  } else if (result === "victory" && myPlacement !== 1) {
+    myPlacement = 1;
+  }
 
   let overall = baseScore;
   if (result === "victory") overall = Math.max(overall, Math.min(100, overall + 12));
-  else if (myPlacement !== null && leaderboard.length > 2) {
-    const frac = 1 - (myPlacement - 1) / (leaderboard.length - 1);
+  else if (myPlacement !== null && placementOf > 2) {
+    const frac = 1 - (myPlacement - 1) / (placementOf - 1);
     overall = Math.round(overall * 0.85 + frac * 100 * 0.15);
   }
   overall = Math.max(0, Math.min(100, Math.round(overall)));
@@ -223,6 +248,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   if (result === "victory") headline = `Victory on ${record.info.config.gameMap} — you finished with ${pct(me.finalLandShare, 1)} of the map.`;
   else if (result === "eliminated")
     headline = `Eliminated at ${clock(me.eliminatedTick ?? 0)} after peaking at ${pct(me.peakLandShare, 1)} of the map` + (myPlacement ? ` (placed #${myPlacement} of ${leaderboard.length}).` : ".");
+  else if (truncated) headline = `Analysis covers the first ${clock(replay.meta.ticks)} of the game; you held ${pct(me.finalLandShare, 1)} of the map by then` + (winner ? ` and ${winner} went on to win.` : ".");
   else headline = `Survived to the end with ${pct(me.finalLandShare, 1)} of the map` + (winner ? `; ${winner} won.` : ".");
   if (biggest) headline += ` Biggest swing: ${lc(biggest.title)} at ${clock(biggest.tick)}.`;
 
@@ -267,7 +293,8 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
       team: me.team,
       result,
       placement: myPlacement,
-      placementOf: leaderboard.length,
+      placementOf,
+      placementUnit,
       eliminatedTick: me.eliminatedTick,
       finalLandShare: me.finalLandShare,
       peakLandShare: me.peakLandShare,

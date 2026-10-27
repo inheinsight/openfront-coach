@@ -5,73 +5,85 @@
 // is necessarily after the game has ended and been archived by OpenFront.
 
 const DEFAULT_COACH = "http://127.0.0.1:5317";
+const FINAL = new Set(["done", "error"]);
 
 async function coachUrl() {
   const { coachUrl } = await chrome.storage.local.get("coachUrl");
   return coachUrl || DEFAULT_COACH;
 }
 
-async function getState() {
+// All changes to stored games go through one queue: events (page messages,
+// heartbeats, alarms) arrive concurrently, and unserialized
+// read-modify-write cycles would overwrite each other.
+let queue = Promise.resolve();
+function mutate(fn) {
+  const run = queue.then(async () => {
+    const { games = {}, identity = {} } = await chrome.storage.local.get(["games", "identity"]);
+    const result = await fn(games, identity);
+    const kept = Object.entries(games).sort((a, b) => b[1].seenAt - a[1].seenAt).slice(0, 50);
+    await chrome.storage.local.set({ games: Object.fromEntries(kept), identity });
+    return result;
+  });
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function snapshot() {
+  await queue;
   const { games = {}, identity = {} } = await chrome.storage.local.get(["games", "identity"]);
   return { games, identity };
 }
 
-async function saveGames(games) {
-  // Keep the 50 most recent.
-  const entries = Object.entries(games).sort((a, b) => b[1].seenAt - a[1].seenAt).slice(0, 50);
-  await chrome.storage.local.set({ games: Object.fromEntries(entries) });
-}
-
-async function rememberIdentity(id) {
-  if (!id || (!id.username && !id.publicId)) return;
-  const { identity } = await getState();
-  const next = { ...identity, ...Object.fromEntries(Object.entries(id).filter(([, v]) => v)) };
-  await chrome.storage.local.set({ identity: next });
+function rememberIdentity(id) {
+  if (!id || (!id.username && !id.publicId)) return Promise.resolve();
+  return mutate((_games, identity) => {
+    for (const [k, v] of Object.entries(id)) if (v) identity[k] = v;
+  });
 }
 
 async function track(gameId, info = {}) {
-  const { games, identity } = await getState();
-  const g = games[gameId] || { gameId, seenAt: Date.now(), status: "playing", sent: false };
-  g.username = info.username || g.username || identity.username || null;
-  g.publicId = info.publicId || g.publicId || identity.publicId || null;
-  g.source = info.source || g.source || "extension";
-  if (info.ended) g.endedAt = g.endedAt || Date.now();
-  games[gameId] = g;
-  await saveGames(games);
-  await send(gameId);
+  const needsSend = await mutate((games, identity) => {
+    const g = games[gameId] || { gameId, seenAt: Date.now(), status: "playing", sent: false };
+    g.username = info.username || g.username || identity.username || null;
+    g.publicId = info.publicId || g.publicId || identity.publicId || null;
+    g.source = info.source || g.source || "extension";
+    if (info.ended) g.endedAt = g.endedAt || Date.now();
+    games[gameId] = g;
+    return !g.sent;
+  });
+  if (needsSend) await send(gameId);
 }
 
 async function send(gameId) {
-  const { games } = await getState();
+  const { games } = await snapshot();
   const g = games[gameId];
-  if (!g) return;
+  if (!g || g.sent || FINAL.has(g.status)) return;
+  let ok = false;
+  let error = null;
   try {
     const res = await fetch(`${await coachUrl()}/api/games/track`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ gameId, username: g.username, publicId: g.publicId, source: g.source }),
     });
-    if (res.ok) {
-      g.sent = true;
-      g.coachError = null;
-    } else {
-      g.coachError = `coach replied ${res.status}`;
-    }
+    ok = res.ok;
+    if (!ok) error = `coach replied ${res.status}`;
   } catch {
-    g.coachError = "coach not running";
+    error = "coach not running";
   }
-  games[gameId] = g;
-  await saveGames(games);
+  await mutate((games2) => {
+    const cur = games2[gameId];
+    if (!cur) return;
+    cur.sent = cur.sent || ok;
+    cur.coachError = ok ? null : error;
+  });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg !== "object") return;
   const id = { username: msg.username || null, publicId: msg.publicId || null };
   if (msg.type === "identity") rememberIdentity(id);
-  if (msg.type === "game-seen") {
-    rememberIdentity(id);
-    track(msg.gameId, { ...id, source: "extension" });
-  }
+  if (msg.type === "game-seen") rememberIdentity(id).then(() => track(msg.gameId, { ...id, source: "extension" }));
   if (msg.type === "game-left") track(msg.gameId, { ...id, ended: true });
 });
 
@@ -83,8 +95,8 @@ chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     const hb = details.url.match(/\/api\/singleplayer\/([A-Za-z0-9_-]{6,40})\/heartbeat/);
     if (hb) {
-      track(hb[1], { source: "singleplayer" });
       chrome.storage.local.set({ lastSingleplayer: hb[1] });
+      track(hb[1], { source: "singleplayer" });
     }
     if (/\/archive_singleplayer_game/.test(details.url)) {
       chrome.storage.local.get("lastSingleplayer").then(({ lastSingleplayer }) => {
@@ -95,35 +107,39 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ["*://*.openfront.io/*", "*://openfront.io/*"] },
 );
 
-// Every minute: resend anything the coach missed, and pick up finished debriefs.
-chrome.alarms.create("poll", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener(async (a) => {
-  if (a.name !== "poll") return;
-  await poll();
+// Every minute: resend anything the coach missed, and pick up finished
+// debriefs. Created only if missing: re-creating an alarm reschedules it,
+// and the worker restarts often.
+chrome.alarms.get("poll").then((a) => {
+  if (!a) chrome.alarms.create("poll", { periodInMinutes: 1 });
+});
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === "poll") return poll();
 });
 
 async function poll() {
-  const { games } = await getState();
+  const { games } = await snapshot();
   const base = await coachUrl();
   for (const g of Object.values(games)) {
+    if (FINAL.has(g.status) || Date.now() - g.seenAt > 12 * 3600 * 1000) continue;
     if (!g.sent) await send(g.gameId);
-    if (g.status === "done" || g.status === "error" || Date.now() - g.seenAt > 12 * 3600 * 1000) continue;
+    let summary;
     try {
-      const res = await fetch(`${base}/api/games/${g.gameId}`);
+      const res = await fetch(`${base}/api/games/${encodeURIComponent(g.gameId)}`);
       if (!res.ok) continue;
-      const { summary } = await res.json();
-      if (summary.status !== g.status) {
-        g.status = summary.status;
-        g.grade = summary.grade;
-        g.map = summary.map;
-        g.headline = summary.headline;
-        if (summary.status === "done") notifyReady(g);
-      }
+      summary = (await res.json()).summary;
     } catch {
-      // coach offline; try next minute
+      continue; // coach offline; try next minute
     }
+    const ready = await mutate((games2) => {
+      const cur = games2[g.gameId];
+      if (!cur || cur.status === summary.status) return false;
+      const was = cur.status;
+      Object.assign(cur, { status: summary.status, grade: summary.grade, map: summary.map, headline: summary.headline });
+      return was !== "done" && summary.status === "done" ? { ...cur } : false;
+    });
+    if (ready) notifyReady(ready);
   }
-  await saveGames(games);
 }
 
 function notifyReady(g) {
@@ -138,7 +154,7 @@ function notifyReady(g) {
 
 chrome.notifications.onClicked.addListener(async (id) => {
   if (!id.startsWith("debrief:")) return;
-  chrome.tabs.create({ url: `${(await coachUrl()).replace("127.0.0.1", "localhost")}/game/${id.slice(8)}` });
+  chrome.tabs.create({ url: `${(await coachUrl()).replace("127.0.0.1", "localhost")}/game/${encodeURIComponent(id.slice(8))}` });
 });
 
 chrome.runtime.onInstalled.addListener(() => poll());

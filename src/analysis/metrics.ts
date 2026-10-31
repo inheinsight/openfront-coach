@@ -1,7 +1,7 @@
 import type { AttackRecord } from "../engine/replayTypes.js";
 import type { GameRecord, PlayerRecord } from "../openfront/types.js";
 import { ReplayView } from "./replayView.js";
-import { OPTIMAL_TROOP_RATIO, peakRegenPerTick, TICKS_PER_SECOND, troopRegenPerTick } from "./rules.js";
+import { GOOD_STACK_RATIO, OPTIMAL_TROOP_RATIO, peakRegenPerTick, SAM_RANGE_LEVEL1, TICKS_PER_SECOND, troopRegenPerTick } from "./rules.js";
 
 const big = (v: string | undefined | null) => (v === undefined || v === null ? 0 : Number(v));
 const at = (arr: string[] | undefined, i: number) => big(arr?.[i]);
@@ -24,8 +24,8 @@ export interface PlayerMetrics {
   finalLandShare: number;
   landShareAt: Record<string, number | null>; // "60", "120", "300", "600", "900"
   tilesAt: Record<string, number | null>;
-  troopEfficiency: number | null; // avg regen / peak regen, post spawn
-  timeAtCapPct: number | null; // share of life with troops >= 90% of cap
+  troopEfficiency: number | null; // avg regen / peak regen, first 15 minutes after spawn
+  timeAtCapPct: number | null; // share of the first 15 minutes with troops >= 90% of cap
   timeOverextendedPct: number | null; // share of life with troops < 15% of cap
   avgTroopRatio: number | null;
   peakTroops: number;
@@ -36,6 +36,10 @@ export interface PlayerMetrics {
   peakGold: number;
   goldAtEnd: number;
   firstCityTick: number | null;
+  /** First Port or Factory: the first building that earns gold. */
+  firstIncomeTick: number | null;
+  /** Gold earned per minute between 5:00 and 10:00 after spawn. */
+  income5to10: number | null;
   citiesAt300: number;
   structuresBuilt: Record<string, number>;
   structuresLost: number;
@@ -46,6 +50,10 @@ export interface PlayerMetrics {
   attacksVsNullius: number;
   avgAttackRatio: number | null;
   fullSends: number; // >= 60% of troops at a player after the opening
+  /** Median of your stack ÷ the defender's troops at home, over land attacks on players. */
+  stackRatio: number | null;
+  /** Share of those attacks sent with at least GOOD_STACK_RATIO × the defender's home troops. */
+  goodStackShare: number | null;
   retreats: number;
   troopsSent: number;
   troopsReceived: number;
@@ -61,6 +69,19 @@ export interface PlayerMetrics {
   nukesIntercepted: number;
   nukesReceived: number;
   samsBuilt: number;
+  /** First enemy human's Missile Silo (or first nuke at you, if earlier), while you could still react. */
+  enemySiloTick: number | null;
+  /** Seconds from enemySiloTick until your own SAM, or a teammate's SAM over one of your Cities; 9999 = never. */
+  samDelaySec: number | null;
+  /** Nukes aimed at land no friendly SAM covered, while you had no SAM of your own. */
+  nukesWithoutOwnSam: number;
+  /** Share of the first three minutes after spawn with home troops under 15% of your cap. */
+  openingDrainedPct: number | null;
+  donations: { troopsSent: number; troopsReceived: number; goldSent: number; goldReceived: number };
+  /** Humans on your team who spawned (team games only). */
+  teamSize: number | null;
+  /** Your share of your team's land from 5:00 on, times team size: 1 = your fair share. */
+  teamShareMultiple: number | null;
   alliancesFormed: number;
   alliancesBrokenByOthers: number;
   betrayals: number;
@@ -115,7 +136,10 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
   const endTick = eliminatedTick ?? view.data.meta.ticks;
   const lifeTicks = Math.max(1, endTick - spEnd);
 
-  // Troop management over the player's life after the spawn phase.
+  // Troop management over the first 15 minutes after the spawn phase. Later
+  // on, a full army is often a deliberate deterrent (FFA leaders) or a
+  // donation stockpile (team carries), so it says little about skill.
+  const troopWindowEnd = spEnd + 900 * TICKS_PER_SECOND;
   let effSum = 0;
   let effN = 0;
   let atCap = 0;
@@ -126,13 +150,14 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
   for (let i = 0; i < ticks.length; i++) {
     if (ticks[i] <= spEnd + 20 || ticks[i] > endTick || !alive[i] || maxT[i] <= 0) continue;
     const r = troops[i] / maxT[i];
+    goldSum += gold[i];
+    goldN++;
+    if (ticks[i] > troopWindowEnd) continue;
     effSum += troopRegenPerTick(troops[i], maxT[i]) / peakRegenPerTick(maxT[i]);
     effN++;
     if (r >= 0.9) atCap++;
     if (r < 0.15) over++;
     ratioSum += r;
-    goldSum += gold[i];
-    goldN++;
   }
 
   const landShareAt: Record<string, number | null> = {};
@@ -198,6 +223,37 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
     (e) => e.kind === "UnitIncoming" && e.playerID === sid && (e.messageType === 4 || e.messageType === 5 || e.messageType === 7),
   ).length;
 
+  // Land attacks on players: how big your stack was against the troops they held at home.
+  const stackRatios = view.data.attacks
+    .filter((a) => a.attacker === sid && !a.naval && (a.targetType === "Human" || a.targetType === "Nation") && a.targetTroopsStart > 0)
+    .filter((a) => !(((a.endTick ?? a.lastTick) - a.startTick) / TICKS_PER_SECOND < 2 && Math.max(0, a.troops - (a.lastTroops ?? 0)) < 0.3 * a.troops))
+    .map((a) => a.troops / a.targetTroopsStart);
+
+  const firstIncome = builds.find((a) => a.unit === "Port" || a.unit === "Factory");
+  const at5 = spEnd + 300 * TICKS_PER_SECOND;
+  const at10 = spEnd + 600 * TICKS_PER_SECOND;
+  const income5to10 = at10 <= endTick && at10 <= view.data.meta.ticks ? (view.valueAt(sid, "goldEarned", at10) - view.valueAt(sid, "goldEarned", at5)) / 5 : null;
+
+  let drained = 0;
+  let openN = 0;
+  for (let i = 0; i < ticks.length; i++) {
+    if (ticks[i] <= spEnd + 20 || ticks[i] > Math.min(endTick, spEnd + 180 * TICKS_PER_SECOND) || !alive[i] || maxT[i] <= 0) continue;
+    openN++;
+    if (troops[i] / maxT[i] < 0.15) drained++;
+  }
+
+  const donations = { troopsSent: 0, troopsReceived: 0, goldSent: 0, goldReceived: 0 };
+  for (const e of view.data.events) {
+    if (e.kind !== "DonateEvent" || !rp.id) continue;
+    const amount = Number(e.amount ?? 0);
+    const troopsKind = e.donationType === "troops";
+    if (e.senderId === rp.id) donations[troopsKind ? "troopsSent" : "goldSent"] += amount;
+    if (e.recipientId === rp.id) donations[troopsKind ? "troopsReceived" : "goldReceived"] += amount;
+  }
+
+  const team = teamShare(view, sid, rp.team, spEnd + 300 * TICKS_PER_SECOND, endTick);
+  const sam = samCover(view, sid, rp.team, spEnd, endTick);
+
   const bombs = stats.bombs ?? {};
   const sumBomb = (i: number) => at(bombs.abomb, i) + at(bombs.hbomb, i) + at(bombs.mirv, i);
   const spawnAction = [...actions].reverse().find((a) => a.type === "spawn");
@@ -231,6 +287,8 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
     peakGold: Math.max(0, ...gold),
     goldAtEnd: fin?.gold ?? gold[gold.length - 1] ?? 0,
     firstCityTick: firstCity?.tick ?? null,
+    firstIncomeTick: firstIncome?.tick ?? null,
+    income5to10,
     citiesAt300: builds.filter((a) => a.unit === "City" && a.tick <= spEnd + 3000).length,
     structuresBuilt,
     structuresLost,
@@ -241,6 +299,8 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
     attacksVsNullius: attackActions.filter((a) => a.targetType === "TerraNullius").length,
     avgAttackRatio: ratios.length ? ratios.reduce((a, b) => a + b, 0) / ratios.length : null,
     fullSends,
+    stackRatio: stackRatios.length >= 2 ? median(stackRatios) : null,
+    goodStackShare: stackRatios.length >= 2 ? stackRatios.filter((r) => r >= GOOD_STACK_RATIO).length / stackRatios.length : null,
     retreats: actions.filter((a) => a.type === "cancel_attack").length + myAttacks.filter((a) => a.retreated).length,
     troopsSent: at(stats.attacks, 0),
     troopsReceived: at(stats.attacks, 1),
@@ -256,6 +316,13 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
     nukesIntercepted: sumBomb(2),
     nukesReceived,
     samsBuilt: at(stats.units?.saml, 0),
+    enemySiloTick: sam.trigger,
+    samDelaySec: sam.delaySec,
+    nukesWithoutOwnSam: sam.uncovered,
+    openingDrainedPct: openN >= 5 ? drained / openN : null,
+    donations,
+    teamSize: team.size,
+    teamShareMultiple: team.multiple,
     alliancesFormed: at(stats.alliances, 0),
     alliancesBrokenByOthers: at(stats.alliances, 1),
     betrayals: big(stats.betrayals) || fin?.betrayals || 0,
@@ -263,6 +330,71 @@ export function computeMetrics(view: ReplayView, record: GameRecord, player: Pla
     maxDrawdown: maxDD,
     actionsPerMinute: actions.filter((a) => a.type !== "mark_disconnected").length / Math.max(1, lifeTicks / TICKS_PER_SECOND / 60),
   };
+}
+
+/** Your share of your team's land from `from` to `to`, as a multiple of a fair 1/teamSize share. */
+function teamShare(view: ReplayView, sid: number, team: string | null, from: number, to: number) {
+  if (team === null) return { size: null, multiple: null };
+  const mates = view.data.players.filter((p) => p.type === "Human" && p.team === team && view.series(p.smallID)?.tiles.some((t) => t > 0));
+  if (mates.length < 2) return { size: mates.length || null, multiple: null };
+  const series = mates.map((p) => view.aligned(p.smallID, "tiles"));
+  const mine = view.aligned(sid, "tiles");
+  let sum = 0;
+  let n = 0;
+  view.ticks.forEach((t, i) => {
+    if (t < from || t > to) return;
+    const total = series.reduce((a, s) => a + s[i], 0);
+    if (total <= 0) return;
+    sum += mine[i] / total;
+    n++;
+  });
+  return { size: mates.length, multiple: n ? (sum / n) * mates.length : null };
+}
+
+/**
+ * When SAM cover arrived after the first enemy Silo (or the first nuke at
+ * you): your own SAM, or a teammate's SAM within range of one of your Cities
+ * (SAMs shoot down any enemy nuke that passes through their range). Also
+ * counts nukes aimed at uncovered land while you had no SAM of your own, using
+ * the launcher's target tile when a human launched it and your Cities
+ * otherwise. (Attackers aim at uncovered land on purpose, so uncovered hits
+ * alone just measure being a target.) Only human structures are tracked, so
+ * nations' Silos don't count.
+ */
+function samCover(view: ReplayView, sid: number, team: string | null, spEnd: number, endTick: number) {
+  const structs = view.data.structures;
+  if (!structs) return { trigger: null, delaySec: null, uncovered: 0 };
+  const friendly = (owner: number) => owner === sid || (team !== null && view.bySmallID.get(owner)?.team === team);
+  const firstSilo = Math.min(Infinity, ...structs.filter((s) => s.type === "Missile Silo" && !friendly(s.owner) && s.builtTick >= spEnd).map((s) => s.builtTick));
+  const nukes = view.data.events.filter((e) => e.kind === "UnitIncoming" && e.playerID === sid && [4, 5, 7].includes(e.messageType as number)).map((e) => e.tick);
+  const trigger = Math.min(firstSilo, nukes[0] ?? Infinity);
+  // Not judged if you were gone within 90 seconds of it.
+  if (!Number.isFinite(trigger) || trigger > endTick - 90 * TICKS_PER_SECOND) return { trigger: null, delaySec: null, uncovered: 0 };
+  const live = (s: { builtTick: number; endTick?: number }, t: number) => s.builtTick <= t && (s.endTick === undefined || s.endTick > t);
+  const cities = structs.filter((s) => s.owner === sid && s.type === "City" && s.context);
+  const sams = structs.filter((s) => s.type === "SAM Launcher" && friendly(s.owner) && s.context);
+  const inRange = (x: number, y: number, t: number) => sams.some((s) => live(s, t) && Math.hypot(x - s.context!.x, y - s.context!.y) <= SAM_RANGE_LEVEL1);
+  const covered = (t: number) => sams.some((s) => s.owner === sid && live(s, t)) || cities.some((c) => live(c, t) && inRange(c.context!.x, c.context!.y, t));
+
+  const launches = view.data.actions.filter((a) => a.type === "build_unit" && a.target === sid && a.x != null && a.y != null && ["Atom Bomb", "Hydrogen Bomb", "MIRV"].includes(a.unit ?? ""));
+  const used = new Set<number>();
+  let uncovered = 0;
+  for (const t of nukes) {
+    if (sams.some((s) => s.owner === sid && live(s, t))) continue;
+    const i = launches.findIndex((a, k) => !used.has(k) && Math.abs(a.tick - t) <= 20);
+    if (i >= 0) {
+      used.add(i);
+      if (!inRange(launches[i].x!, launches[i].y!, t)) uncovered++;
+      continue;
+    }
+    // A nation's nuke: no target tile, so ask whether most of your Cities were covered.
+    const liveCities = cities.filter((c) => live(c, t));
+    if (liveCities.filter((c) => inRange(c.context!.x, c.context!.y, t)).length < liveCities.length / 2) uncovered++;
+  }
+
+  const candidates = [trigger, ...sams.map((s) => s.builtTick), ...cities.map((c) => c.builtTick)].filter((t) => t >= trigger && t <= endTick).sort((a, b) => a - b);
+  for (const t of candidates) if (covered(t)) return { trigger, delaySec: (t - trigger) / TICKS_PER_SECOND, uncovered };
+  return { trigger, delaySec: 9999, uncovered };
 }
 
 /** The share of land each tracked player holds at each sample. */

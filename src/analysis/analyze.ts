@@ -7,10 +7,11 @@ import { clock, fmtNum, pct, TICKS_PER_SECOND } from "./rules.js";
 import { coach, grade, overallOf, scoreGame } from "./scoring.js";
 import { analyzeStatsOnly } from "./statsOnly.js";
 import { analyzeEconomy } from "./economy.js";
+import { playModeOf } from "./mode.js";
 import { analyzeTroops } from "./troops.js";
 import type { Analysis, BuildRow, KeyMoment, PlayerSummary } from "./types.js";
 
-export const ANALYSIS_VERSION = 2;
+export const ANALYSIS_VERSION = 3;
 
 export interface Identity {
   clientID?: string | null;
@@ -91,16 +92,17 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   }
 
   const myId = view.byClientID.get(me.clientID)?.id ?? null;
-  const { moments, ledger } = detectMoments({ view, record, me, all, myId });
+  const mode = playModeOf(record);
+  const { moments, ledger } = detectMoments({ view, record, me, all, myId, mode });
   // Economy, buildings and warships.
-  const econ = analyzeEconomy(view, record, meRec, me, all);
+  const econ = analyzeEconomy(view, record, meRec, me, all, mode);
   econ.moments.forEach((m, i) => moments.push({ id: `e${i + 1}`, ...m }));
   moments.sort((a, b) => a.tick - b.tick);
 
   // Troop habits: the lesson, attack cards and drills.
-  const troops = analyzeTroops(view, me, all, record.info.config.gameMode === "Team" && me.team !== null);
+  const troops = analyzeTroops(view, me, all, mode.teammates && me.team !== null);
 
-  const { categories } = scoreGame(view, me, all, ledger);
+  const { categories } = scoreGame(view, me, all, ledger, mode);
   if (econ.report.placements.length || econ.report.buildOrder.length) {
     const r = econ.report;
     const counts = (v: string[]) => r.placements.filter((p) => v.includes(p.verdict)).length;
@@ -139,7 +141,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
     });
   }
   const baseScore = overallOf(categories);
-  const { strengths, weaknesses, drills } = coach(categories, moments, me);
+  const { strengths, weaknesses, drills } = coach(categories, moments, me, mode);
 
   // ---- placement & leaderboard ------------------------------------------
   const finals = new Map(replay.finalState.map((f) => [f.smallID, f]));
@@ -373,7 +375,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
 /** The "five numbers" triage card (AoE2-style): read these before anything else. */
 function keyNumbersFor(me: PlayerMetrics, all: PlayerMetrics[], categories: Analysis["categories"]) {
   const pick = (key: string) => categories.flatMap((c) => c.metrics).find((m) => m.key === key);
-  const out = ["share120", "firstCity", "troopEff", "atCap", "float", "drawdown"].map(pick).filter((x): x is NonNullable<typeof x> => !!x);
+  const out = ["share300", "income5to10", "stackRatio", "troopEff", "samDelay", "drawdown", "teamShare"].map(pick).filter((x): x is NonNullable<typeof x> => !!x);
   const others = all.filter((m) => m.smallID !== me.smallID);
   out.push({
     key: "apm",

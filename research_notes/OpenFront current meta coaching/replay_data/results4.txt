@@ -1,0 +1,8 @@
+Opening fell behind moments 292 with avgOpeningRatio<0.4 (=> 'open with bigger sends' advice): 258 median ratio 0.21
+City bought Ns after affordable — TOP5: n81 wait median 92s, fired at game time median 467s after spawn | REST: n349 wait median 94s, fired at game time median 394s after spawn
+Gold piled up — TOP5: 15 moments, median peak gold 56.7M | REST: 69 moments, median peak gold 6.8M
+Army idle at cap Team TOP5 moments 118 median run 76 s
+Army idle at cap Team REST moments 1104 median run 90 s
+Army idle at cap Free For All TOP5 moments 48 median run 180 s
+Army idle at cap Free For All REST moments 218 median run 96 s
+Team players at/above 500k gold/min (top of coach's absolute curve): 60% of 1186

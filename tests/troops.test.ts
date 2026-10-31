@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActionContext, ReplayData } from "../src/engine/replayTypes";
 import { ReplayView } from "../src/analysis/replayView";
-import { attackLossMultiplier, CHEAPEST_STACK } from "../src/analysis/rules";
 import { gradeDrill, sendsOf } from "../src/analysis/troops";
 import type { DrillSpot } from "../src/analysis/types";
 
@@ -16,16 +15,6 @@ function view(actions: Partial<ActionContext>[]): ReplayView {
   } as unknown as ReplayData;
   return new ReplayView(data);
 }
-
-describe("attack losses", () => {
-  it("clamps between 0.6 and 2 of the defender's home troops per your stack", () => {
-    expect(attackLossMultiplier(0.25)).toBe(2);
-    expect(attackLossMultiplier(0.5)).toBe(2);
-    expect(attackLossMultiplier(1)).toBe(1);
-    expect(attackLossMultiplier(3)).toBe(0.6);
-    expect(CHEAPEST_STACK).toBeCloseTo(1.667, 3);
-  });
-});
 
 describe("sends", () => {
   it("folds quick clicks on one player into a single decision", () => {

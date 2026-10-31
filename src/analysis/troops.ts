@@ -7,7 +7,7 @@ import type { AttackRecord } from "../engine/replayTypes.js";
 import type { PlayerMetrics } from "./metrics.js";
 import { median } from "./metrics.js";
 import type { ReplayView } from "./replayView.js";
-import { attackLossMultiplier, CHEAPEST_STACK, clock, fmtNum, HOME_FLOOR, OPENING_FLOOR, OPENING_SECONDS, pct, TICKS_PER_SECOND } from "./rules.js";
+import { CHEAPEST_STACK_RATIO, clock, fmtNum, GOOD_STACK_RATIO, HOME_FLOOR, lossMultiplier, OPENING_FLOOR, OPENING_SECONDS, pct, TICKS_PER_SECOND } from "./rules.js";
 import type { AttackCard, DrillSpot, Severity, TroopLesson, TroopReport, TroopRule } from "./types.js";
 
 const SEC = TICKS_PER_SECOND;
@@ -159,7 +159,7 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
     for (const p of series) {
       if (p.tick <= s.lastTick || !p.theirs || p.theirs <= 0) continue;
       const st = s.homeBefore / p.theirs;
-      if (st >= CHEAPEST_STACK) {
+      if (st >= CHEAPEST_STACK_RATIO) {
         window = { tick: p.tick, theirHome: p.theirs, stack: st };
         break;
       }
@@ -196,14 +196,14 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
       `They had just sent ${fmtNum(push.troops)} at you. Keep your army home: their attack has to win every tile against it, and opposing attacks cancel troop for troop, so a big counter mostly trades your reserve away.` +
       (teamGame ? " Ask your team for troops instead." : "");
   } else if (s.stack >= 1) {
-    call = `Good stack: ${x(s.stack)} their home army.` + (s.stack < CHEAPEST_STACK ? ` At ${x(CHEAPEST_STACK)} or more every tile costs the least.` : " That's the cheapest loss rate there is.");
+    call = `Good stack: ${x(s.stack)} their home army.` + (s.stack < CHEAPEST_STACK_RATIO ? ` At ${x(CHEAPEST_STACK_RATIO)} or more every tile costs the least.` : " That's the cheapest loss rate there is.");
   } else if (s.targetHome / s.homeBefore <= 1 - HOME_FLOOR) {
     // You could have matched them and still kept a floor at home.
-    call = `Send at least ${fmtNum(s.targetHome)} (${pct(s.targetHome / s.homeBefore)} of your army) to match their home army, or don't attack. ${fmtNum(s.sent)} was ${x(s.stack)}, so every tile cost you ${attackLossMultiplier(s.stack).toFixed(1)}× the base rate.`;
+    call = `Send at least ${fmtNum(s.targetHome)} (${pct(s.targetHome / s.homeBefore)} of your army) to match their home army, or don't attack. ${fmtNum(s.sent)} was ${x(s.stack)}, so every tile cost you ${lossMultiplier(s.sent, s.targetHome).toFixed(1)}× the base rate.`;
   } else if (window) {
     call =
       `Hold your ${fmtNum(s.homeBefore)}. At ${clock(window.tick)} their home army fell to ${fmtNum(window.theirHome)}: your whole army there would have been ${x(window.stack)}` +
-      (window.stack >= CHEAPEST_STACK ? ", the cheapest loss rate there is." : ".");
+      (window.stack >= CHEAPEST_STACK_RATIO ? ", the cheapest loss rate there is." : ".");
   } else if (teammates.length) {
     call = `Don't send this alone: matching their home army needed ${fmtNum(s.targetHome)}. Donate to ${teammates[0]}, who was already attacking them, or wait until they send troops elsewhere.`;
   } else {
@@ -225,7 +225,7 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
     cap: s.cap,
     targetHome: s.targetHome,
     stack: +s.stack.toFixed(3),
-    loss: +attackLossMultiplier(s.stack).toFixed(2),
+    loss: +lossMultiplier(s.sent, s.targetHome).toFixed(2),
     troopsUsed,
     tilesGained,
     homeAfter,
@@ -353,7 +353,7 @@ export function analyzeTroops(view: ReplayView, me: PlayerMetrics, all: PlayerMe
     lesson = {
       rule: "stack",
       title: "Attack a player only when your stack is at least their home army.",
-      why: `Aim for ${x(CHEAPEST_STACK)}. At half their home army or less, the engine charges you double troops for every tile you take.`,
+      why: `Aim for ${x(GOOD_STACK_RATIO)}. At half their home army or less, the engine charges you double troops for every tile you take.`,
       stat: `${passed} of ${sends.length}`,
       statLabel: "attacks you started on players met it",
       benchmarks: [
@@ -490,9 +490,9 @@ export function gradeDrill(d: DrillSpot, pctSent: number): { severity: Severity;
         : r("inaccuracy", "You could have hit them", `All ${fmtNum(home)} of your army was ${x(full)} their home army.`);
     }
     const st = sent / theirs;
-    if (st >= CHEAPEST_STACK) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army: every tile costs the least.`);
+    if (st >= CHEAPEST_STACK_RATIO) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army: every tile costs the least.`);
     if (st >= 1) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army.`);
-    if (st > 0.5) return r("inaccuracy", "Short of their home army", `${fmtNum(sent)} is ${x(st)} their home army, so each tile costs you ${attackLossMultiplier(st).toFixed(1)}× the base rate.`);
+    if (st > 0.5) return r("inaccuracy", "Short of their home army", `${fmtNum(sent)} is ${x(st)} their home army, so each tile costs you ${lossMultiplier(sent, theirs).toFixed(1)}× the base rate.`);
     return r(p >= 60 ? "blunder" : "mistake", "At the double-loss ceiling", `${fmtNum(sent)} into ${fmtNum(theirs)} at home is ${x(st)}: every tile costs you double.`);
   }
   const floor = d.floor ?? 0;

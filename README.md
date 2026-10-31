@@ -16,8 +16,9 @@ OpenFront's terms forbid real-time assistance, so the coach never reads or shows
   The debrief opens with the one habit to fix next, this game's evidence for it, the numbers for the lobby's median player and its top five, and how that habit has trended across your games.
 - **Front-line chart.** Your share of the map against your main rivals, with key moments pinned to the curve using chess annotation glyphs: `!!` brilliant, `!` good, `?!` inaccuracy, `?` mistake, `??` blunder.
 - **Key moments and map replay.** Each moment explains what happened, why it mattered and what to do instead. Selecting one jumps a territory-map replay to that point.
-  - Detected moment types: slow openings, attacks that went badly, idle armies sitting at the troop cap, empty armies caught under attack, territory collapses (with who did it and why), big pushes, banked gold, late Cities, betrayals, nukes without SAM cover, lost transports.
-- **Scorecard.** Expansion, economy, troop management, combat, defense, diplomacy, naval and nuclear play, each scored 0–100. Scores compare you with every other human in the same lobby and with absolute targets taken from the engine's own formulas.
+  - Detected moment types: openings that fell behind at 2:00 or 5:00, armies drained in the opening, attacks with stacks smaller than the defender's home army, panic counter-attacks into a bigger push, idle armies at the troop cap (in team games, while a teammate had room), territory collapses (with who did it and why), big pushes, idle gold, nukes that reached Cities with no SAM cover, betrayals, lost transports, leaving a team game early, and FFA overtime.
+- **Game modes.** The coach reads the lobby: FFA and Duos/Trios/Quads are judged on your own play, while 2–3 team games and Humans vs Nations are judged on what you added to your team (donations, the front you held, shared SAM cover, trade with teammates).
+- **Scorecard.** Expansion, economy, troop management, combat, defense, teamwork (team games), diplomacy, naval and nuclear play, each scored 0–100. Scores compare you with every other human in the same lobby and with absolute targets taken from the engine's own formulas. Measures that don't separate winners from the rest (first-City time, retreats, nukes received) are shown but not graded.
 - **Economy and buildings.**
   - Every building you placed gets a verdict on the map, with a suggested better spot when there was one:
     - Cities and Silos: the safest interior point at the time.
@@ -102,9 +103,9 @@ openfront.io ──(game ID, after you play)──▶ extension ──▶ local 
 3. **Measurement.** The harness samples every human and nation (territory, troops, troop cap, gold, units, attacks) and records your intents with their context, such as your army and the defender's when you attacked. It credits every captured tile to the attack that took it, using the engine's own tile updates.
 4. **Coaching rules.** The rules come from the engine's formulas. Two examples:
    - Troop regen is `(10 + troops^0.73/4) · (1 − troops/cap)`, which peaks at 42% of the cap.
-   - Attacks with a stack under ~60% of the defender's army pay up to double losses.
+   - Attack losses per tile double when your stack is half the defender's home troops or less, and are cheapest from about 1.67×.
 
-   Community strategy guides inform the rest. See [docs/strategy-notes.md](docs/strategy-notes.md).
+   2026 player guides and a replay study of what winners in current public lobbies actually do inform the rest. See [docs/strategy-notes.md](docs/strategy-notes.md) and the research report in [reports/](reports/).
 5. **Fallback.** Games from builds older than OpenFront's October 2025 engine package split get a stats-and-actions analysis from the record alone.
 
 ## Development
@@ -125,6 +126,7 @@ Useful scripts:
 - `npx tsx scripts/try-analyze.ts <gameId> <username>`: print the full analysis for one player.
 - `npx tsx scripts/reanalyze.ts [gameId ...]`: re-run the analysis for your games from their cached replays, keeping each written debrief. Use it after the analysis changes; with no IDs it covers every game.
 - `npx tsx scripts/try-ai.ts <gameId> <username>`: run analysis, then Jev and the narrator.
+- `npx tsx scripts/rule-audit.ts [--team | --ffa]`: re-run every coaching rule for every human in your cached games and show which rules fire on each lobby's top five as often as on everyone else.
 - `node scripts/extension-sim.mjs <game url> <username> [publicId]`: run the real extension code against the coach.
 
 Data (SQLite database, cached records, engine builds, replays) lives in `./data`.

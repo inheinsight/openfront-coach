@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type TrendRow } from "../api";
-import { clock, gradeColor, pct } from "../format";
+import { clock, fmtNum, gradeColor, pct } from "../format";
 import { Link } from "../router";
 
 interface MetricSpec {
@@ -14,12 +14,11 @@ interface MetricSpec {
 }
 
 const METRICS: MetricSpec[] = [
-  { key: "stackMedian", label: "Stack ÷ their home army", fmt: (v) => `${v.toFixed(2)}×`, target: 1, higherIsBetter: true, why: "Below 1× you pay more troops per tile than they do; at 0.5× or less, double." },
+  { key: "share300", label: "Land at 5:00 vs typical player", fmt: (v) => `${v.toFixed(2)}×`, target: 1, higherIsBetter: true, why: "The strongest early predictor of where you finish." },
+  { key: "stackRatio", label: "Attack stack vs the defender's home troops", fmt: (v) => `${v.toFixed(2)}×`, target: 1, higherIsBetter: true, why: "Losses double at 0.5× and are cheapest from about 1.67×." },
+  { key: "income5to10", label: "Income per minute, 5:00–10:00", fmt: (v) => fmtNum(v), higherIsBetter: true, why: "Trade ships and trains: where winners pull ahead." },
+  { key: "firstIncome", label: "First Port or Factory after spawn", fmt: (v) => (v >= 9999 ? "never" : clock(v * 10)), target: 180, higherIsBetter: false, why: "Have something earning by 3:00." },
   { key: "troopEff", label: "Troop growth efficiency", fmt: (v) => pct(v), target: 0.8, higherIsBetter: true, why: "Regen peaks with troops around 42% of the cap." },
-  { key: "share120", label: "Land at 2:00 vs typical player", fmt: (v) => `${v.toFixed(2)}×`, target: 1.5, higherIsBetter: true, why: "Fast openings snowball." },
-  { key: "firstCity", label: "First City after spawn", fmt: (v) => (v >= 9999 ? "never" : clock(v * 10)), target: 150, higherIsBetter: false, why: "Each City level adds 250k troop cap." },
-  { key: "float", label: "Gold left unspent", fmt: (v) => `${v.toFixed(1)} min`, target: 2, higherIsBetter: false, why: "Average gold held, in minutes of your income." },
-  { key: "atCap", label: "Time with troops at the cap", fmt: (v) => pct(v), target: 0.08, higherIsBetter: false, why: "Growth stops at the cap." },
   { key: "drawdown", label: "Worst territory collapse", fmt: (v) => pct(v), target: 0.25, higherIsBetter: false, why: "How much ground one bad stretch cost you." },
 ];
 

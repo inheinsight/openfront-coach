@@ -1,8 +1,10 @@
-// Game rules the coach reasons with. Mirrors OpenFront's engine
-// (packages/engine-lib/src/configuration/Config.ts and
-// packages/engine/src/configuration/EngineConfig.ts, read 2026-10-26).
-// Balance changes often, so every coaching claim that depends on a number
-// lives here, in one place.
+// Game rules the coach reasons with. Mirrors OpenFront's engine on the live
+// release branch, v0.35.9 (commit 7ee96860, read 2026-10-30):
+// packages/engine-lib/src/configuration/Config.ts and
+// packages/engine/src/configuration/EngineConfig.ts. Public games run the
+// release branch, not main, so re-check these against the commit in a new
+// game record. Balance changes often, so every coaching claim that depends on
+// a number lives here, in one place.
 
 export const TICKS_PER_SECOND = 10;
 
@@ -25,18 +27,6 @@ export function baseTroopCap(tiles: number): number {
   return 2 * (Math.pow(Math.max(0, tiles), 0.6) * 1000 + 50_000);
 }
 
-/**
- * Attack losses per tile scale with clamp(defender home troops ÷ your stack,
- * 0.6, 2) (v0.35 EngineConfig). "Home" means troops not out in attacks.
- */
-export const LOSS_MULT_MIN = 0.6;
-export const LOSS_MULT_MAX = 2;
-export function attackLossMultiplier(stack: number): number {
-  return Math.min(LOSS_MULT_MAX, Math.max(LOSS_MULT_MIN, 1 / Math.max(stack, 1e-6)));
-}
-/** The stack (÷ their home troops) where losses bottom out: 1 / 0.6 ≈ 1.67. */
-export const CHEAPEST_STACK = 1 / LOSS_MULT_MIN;
-
 /** Home-army floor with a neighbour in reach: 25% of the cap in the opening, 35% after. */
 export const OPENING_SECONDS = 180;
 export const OPENING_FLOOR = 0.25;
@@ -47,6 +37,41 @@ export const GOLD_PER_SECOND_HUMAN = 1_000; // 100 gold per tick
 export const RETREAT_PENALTY = 0.25; // share of surviving troops lost when retreating from a player
 export const TRAITOR_SECONDS = 30;
 export const WIN_LAND_SHARE = 0.8;
+/** FFA Overtime: from minute 30 the win bar drops this much per minute. */
+export const OVERTIME_START_MINUTES = 30;
+export const OVERTIME_DROP_PER_MINUTE = 0.02;
+/** Leaving a team game while alive keeps the win only if your team already held this share of the land. */
+export const TEAM_LEAVE_CREDIT_SHARE = 0.7;
+export const DONATION_COOLDOWN_SECONDS = 10;
+/** You lose only this share of the usual troops per tile when attacking a bot. */
+export const BOT_ATTACKER_LOSS = 0.7;
+/** Expansion into plains stops speeding up once an attack holds this many troops. */
+export const UNCLAIMED_SPEED_CAP_TROOPS = 6_600;
+export const SAM_RANGE_LEVEL1 = 70;
+export const SAM_BUILD_SECONDS = 30;
+
+/**
+ * Attack losses per tile scale with clamp(defender's home troops / your
+ * stack, 0.6, 2) (plus a term for how densely the defender packs troops).
+ * So you pay double at half their home troops or less, and losses bottom out
+ * once your stack is 1/0.6 ≈ 1.67× theirs.
+ */
+export function lossMultiplier(stack: number, defenderHomeTroops: number): number {
+  if (stack <= 0) return 2;
+  return Math.max(0.6, Math.min(2, defenderHomeTroops / stack));
+}
+export const DOUBLE_LOSS_STACK_RATIO = 0.5;
+export const CHEAPEST_STACK_RATIO = 1 / 0.6;
+/** Stack size the coach asks for against players: past the cheapest-loss point, with a margin. */
+export const GOOD_STACK_RATIO = 1.7;
+
+/** Gold a trade ship pays each port owner (both ends) for a route of `dist` tiles. */
+export function tradeShipGold(dist: number): number {
+  return 75_000 / (1 + Math.exp(-0.03 * (dist - 300))) + 50 * dist;
+}
+
+/** Gold per train stop, paid to the train owner and the station owner. */
+export const TRAIN_STOP_GOLD = { own: 10_000, teammateOrOther: 25_000, ally: 35_000 };
 
 export const UNIT_COSTS: Record<string, string> = {
   City: "125k × 2^n (max 1M); +250k troop cap per level",
@@ -58,7 +83,7 @@ export const UNIT_COSTS: Record<string, string> = {
   "SAM Launcher": "1.5M, then 3M",
   "Atom Bomb": "750k",
   "Hydrogen Bomb": "5M",
-  MIRV: "25M + 15M per MIRV already launched",
+  MIRV: "25M + 15M per MIRV anyone in the lobby has launched",
 };
 
 export const NUKE_UNITS = ["Atom Bomb", "Hydrogen Bomb", "MIRV"];

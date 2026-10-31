@@ -7,8 +7,9 @@ import type { PlacementContext, StructureRecord } from "../engine/replayTypes.js
 import type { GameRecord, PlayerRecord } from "../openfront/types.js";
 import type { PlayerMetrics } from "./metrics.js";
 import { median } from "./metrics.js";
+import type { PlayMode } from "./mode.js";
 import { ReplayView } from "./replayView.js";
-import { clock, fmtNum, pct, TICKS_PER_SECOND } from "./rules.js";
+import { clock, fmtNum, pct, TICKS_PER_SECOND, tradeShipGold, TRAIN_STOP_GOLD } from "./rules.js";
 import type { KeyMoment, Severity } from "./types.js";
 
 const SEC = TICKS_PER_SECOND;
@@ -117,7 +118,7 @@ function hostileNearFactory(name: (id: number | null | undefined) => string) {
     c.frontEnemy !== null && !c.frontEnemyAllied && c.distFront !== null && c.distFront < 40 ? `${c.distFront} tiles from ${name(c.frontEnemy)}'s border` : null;
 }
 
-export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: PlayerRecord, me: PlayerMetrics, all: PlayerMetrics[]): { report: EconomyReport; moments: Omit<KeyMoment, "id">[] } {
+export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: PlayerRecord, me: PlayerMetrics, all: PlayerMetrics[], mode: PlayMode): { report: EconomyReport; moments: Omit<KeyMoment, "id">[] } {
   const sid = me.smallID;
   const data = view.data;
   const ticks = view.ticks;
@@ -208,7 +209,12 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
         verdict = "good";
         note = `good timing: your army was at ${pct(ratio)} of its cap, so +250k cap paid off at once`;
       }
-      if (waited !== null && waited > 60) {
+      // Waiting only costs something when the cap was the limit and the gold
+      // wasn't going anywhere else (Ports, SAMs and Silos all compete for it).
+      const waitStart = waited !== null ? a.tick - waited * SEC : a.tick;
+      const boughtMeanwhile = actions.some((b) => b !== a && (b.type === "build_unit" || b.type === "upgrade_structure") && b.tick >= waitStart && b.tick < a.tick);
+      const capped = ratio !== null && ratio >= 0.8;
+      if (waited !== null && waited > 60 && capped && !boughtMeanwhile) {
         verdict = waited > 150 ? "mistake" : "inaccuracy";
         note = `you had the ${fmtNum(cost)} for ${Math.round(waited)}s before buying it` + (ratio !== null && ratio >= 0.8 ? ", while your army sat at its cap" : "");
       }
@@ -222,15 +228,17 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
     }
     buildOrder.push({ tick: a.tick, unit, upgrade, cost, waitedSec: waited === null ? null : Math.round(waited), troopRatio: ratio === null ? null : +ratio.toFixed(2), verdict, note });
   }
-  const lateCity = buildOrder.find((b) => b.unit === "City" && !b.upgrade && (b.waitedSec ?? 0) > 60);
+  // Only early Cities: later, the same gold is SAM and Silo money.
+  const cityCutoff = Math.min(spEnd + 600 * SEC, me.enemySiloTick ?? Infinity);
+  const lateCity = buildOrder.find((b) => b.unit === "City" && !b.upgrade && b.tick <= cityCutoff && (b.verdict === "mistake" || b.verdict === "inaccuracy"));
   if (lateCity) {
     moments.push({
       tick: lateCity.tick,
       kind: "economy",
       severity: lateCity.verdict === "mistake" ? "mistake" : "inaccuracy",
       title: `City bought ${lateCity.waitedSec}s after you could afford it`,
-      detail: `${clock(lateCity.tick)}: ${lateCity.note}. Every second without it is 250k troop cap you don't have.`,
-      suggestion: "Buy Cities the moment the gold is there, unless you're saving for something specific.",
+      detail: `${clock(lateCity.tick)}: ${lateCity.note}. With the army at its cap, every second without it is 250k troop cap you don't have.`,
+      suggestion: "When your troops sit at the cap and you have the gold, buy the City at once.",
       evidence: { waitedSec: lateCity.waitedSec, cost: lateCity.cost, troopRatio: lateCity.troopRatio },
     });
   }
@@ -269,9 +277,9 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
     if (fate !== "kept" && lostAfter !== null && inCollapse) {
       notes.push(`${fate} at ${clock(s.endTick!)} when your territory collapsed${lostTo ? ` (${lostTo})` : ""}`);
     } else if (nuked) {
-      worse(c.underSam ? "info" : "inaccuracy", `${s.type} nuked${c.underSam ? "" : " with no SAM cover"}`);
+      // Leaders get nuked wherever they build; SAM timing is judged separately.
       notes.push(`destroyed by a nuke at ${clock(s.endTick!)}${c.underSam ? "" : ", with no SAM covering it"}`);
-    } else if (fate !== "kept" && lostAfter !== null && lostAfter < 150) {
+    } else if (fate !== "kept" && lostAfter !== null && lostAfter < 150 && s.type !== "Defense Post") {
       worse("mistake", `${s.type} lost ${Math.round(lostAfter)}s after you built it`);
       notes.push(
         `${fate === "captured" ? "captured" : "destroyed"} ${Math.round(lostAfter)}s after you placed it${lostTo ? ` by ${lostTo}` : ""}, while the rest of your land held` +
@@ -285,7 +293,8 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
       case "Missile Silo":
       case "Factory": {
         if (hostile && c.distFront !== null && c.distFront < 20) {
-          worse(fate === "kept" ? "inaccuracy" : "mistake", `${s.type} ${c.distFront} tiles from ${enemyName}'s border`);
+          // Big players build near fronts because they own most of the map: only a loss makes it a mistake.
+          if (fate !== "kept" && lostAfter !== null && lostAfter < 150) worse("mistake", `${s.type} ${c.distFront} tiles from ${enemyName}'s border`);
           if (!where || fate === "kept") notes.push(`only ${c.distFront} tiles from ${enemyName}'s border${c.frontEnemyTroops ? ` (${fmtNum(c.frontEnemyTroops)} troops)` : ""}; buildings change hands when that land is taken`);
         } else if (fate === "kept" && (c.distFront === null || c.distFront >= 40) && s.type === "City") {
           if (verdict === "info") verdict = "good";
@@ -295,8 +304,10 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
         }
         if (s.type === "Factory") {
           if (c.railLinks < 2) {
-            worse("inaccuracy", "Factory with almost no rail links");
-            notes.push(`only ${c.railLinks} of your Cities/Ports/Factories within rail range (110 tiles); trains need stations to visit to earn anything`);
+            notes.push(
+              `only ${c.railLinks} of your own Cities/Ports/Factories within rail range (110 tiles). Rail also links other players' stations` +
+                (mode.teammates ? `, and a stop at a teammate's pays ${fmtNum(TRAIN_STOP_GOLD.teammateOrOther)} to both of you, so build Factories where your land meets your teammates'` : ", so this only matters if nobody else's Cities or Ports were near"),
+            );
           } else {
             if (verdict === "info") verdict = "good";
             notes.push(`links ${c.railLinks} of your stations by rail`);
@@ -311,16 +322,19 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
       case "Port": {
         const t = c.trade;
         if (t && t.partners === 0) {
-          worse("mistake", "Port with no trade partners");
-          notes.push("no other player's port shared this water, so it could never trade (fine only if it was meant for warships)");
+          // Later Ports are often for warships; only a first Port that can't trade is a real mistake.
+          // Early on, partners appear as other players build Ports, so this is a note, not a verdict.
+          notes.push("no other player's Port shared this water when you built it, so it could only trade once someone else built one there");
         } else if (t) {
           notes.push(`${t.partners} trade partner${t.partners === 1 ? "" : "s"}, about ${fmtNum(t.expGold)} gold per trade ship${t.medianDist ? `, median route ${t.medianDist} tiles` : ""}`);
-          if (t.shortShare >= 0.5) notes.push(`${pct(t.shortShare)} of its partners were under 300 tiles away; short routes pay only a few thousand`);
+          if (t.shortShare >= 0.5) notes.push(`${pct(t.shortShare)} of its partners were under 300 tiles away; a 200-tile route pays about ${fmtNum(tradeShipGold(200))} per ship against ${fmtNum(tradeShipGold(300))} at 300 and ${fmtNum(tradeShipGold(500))} at 500`);
           if (t.expGold >= 80_000 && verdict === "info") verdict = "good";
         }
         if (t && c.betterSpot?.trade) {
           const gain = c.betterSpot.trade.expGold - t.expGold;
-          if (gain >= 15_000 && c.betterSpot.trade.expGold >= t.expGold * 1.25) {
+          // Judge the first two Ports: by then the good coast is what you build on next.
+          const early = mine.filter((x) => x.type === "Port").sort((a, b) => a.builtTick - b.builtTick).slice(0, 2).some((x) => x.id === s.id);
+          if (early && gain >= 15_000 && c.betterSpot.trade.expGold >= t.expGold * 1.25) {
             worse(gain >= 40_000 ? "mistake" : "inaccuracy", "Port on a weaker stretch of coast");
             better = { x: c.betterSpot.x, y: c.betterSpot.y, why: `${away(c, c.betterSpot)} on your coast: about ${fmtNum(c.betterSpot.trade.expGold)} per ship vs ${fmtNum(t.expGold)} here (longer routes)` };
           }
@@ -333,7 +347,6 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
           worse("mistake", "Defense Post with no front to defend");
           notes.push("no enemy border anywhere near it; a Defense Post only protects tiles within 30 of it");
         } else if (c.distFront > 40) {
-          worse("inaccuracy", `Defense Post ${c.distFront} tiles from the front`);
           notes.push(`${c.distFront} tiles from the nearest front (${enemyName}); it only protects tiles within 30`);
         } else {
           if (verdict === "info") verdict = "good";
@@ -347,8 +360,8 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
       }
       case "SAM Launcher": {
         if ((c.samCovers ?? 0) === 0) {
-          worse("mistake", "SAM covering none of your buildings");
-          notes.push("covered none of your buildings (level-1 range is 70 tiles)");
+          worse(mode.teammates ? "inaccuracy" : "mistake", "SAM covering none of your buildings");
+          notes.push(mode.teammates ? "covered none of your own buildings (level-1 range is 70 tiles); it still protects any teammate's land in range" : "covered none of your buildings (level-1 range is 70 tiles)");
         } else {
           if (verdict === "info") verdict = "good";
           notes.push(`covered ${c.samCovers} of your buildings`);
@@ -438,7 +451,9 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
   }
   const tradeLostTo = [...lostTo.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   const wAdvice: string[] = [];
-  if (tradeShipsLost >= 3 && warReviews.length === 0) {
+  // Big traders lose some ships to piracy whatever they do; only a real share is worth a moment.
+  const lostShare = tradeShipsLost / Math.max(1, me.tradeShipsSent);
+  if (tradeShipsLost >= 5 && warReviews.length === 0 && lostShare >= 0.2) {
     wAdvice.push(`${tradeShipsLost} of your trade ships were captured${tradeLostTo[0] ? `, ${tradeLostTo[0].count} of them by ${tradeLostTo[0].name}` : ""}, and you had no warship. One warship parked by your busiest port (250k) protects every ship that passes it.`);
     moments.push({
       tick: endTick - 3,
@@ -450,24 +465,15 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
       evidence: { tradeShipsLost },
     });
   }
-  if (tradeShipsLost >= 5 && warReviews.length > 0) {
+  if (tradeShipsLost >= 5 && warReviews.length > 0 && lostShare >= 0.2) {
     const sunkFast = warReviews.filter((w) => w.verdict === "mistake").length;
     const top = tradeLostTo[0];
+    // Advice only: with warships out, losing some ships is the cost of trading.
     wAdvice.push(
       `${tradeShipsLost} of your trade ships were still captured despite ${warReviews.length} warship${warReviews.length > 1 ? "s" : ""}${top ? `; ${top.name} alone took ${top.count}` : ""}.` +
         (sunkFast ? ` ${sunkFast} of your warships were sunk within 90 seconds of launch: send them out in pairs, or after the enemy warship has moved on, rather than one at a time into its range.` : "") +
         " Keep them on the lanes between your ports and your partners' ports, where captures happen.",
     );
-    moments.push({
-      tick: endTick - 4,
-      kind: "naval",
-      severity: tradeShipsLost >= 12 ? "mistake" : "inaccuracy",
-      title: `${tradeShipsLost} trade ships captured${top ? `, ${top.count} by ${top.name}` : ""}`,
-      detail: `Each captured ship pays its full value to the captor instead of you. Your warships: ${warReviews.map((w) => w.note).filter(Boolean).join("; ")}.`,
-      suggestion: "Guard your trade lanes with warships in pairs, and don't sail into an enemy warship's range alone.",
-      focus: [],
-      evidence: { tradeShipsLost, warships: warReviews.length },
-    });
   }
   if (warReviews.some((w) => w.verdict === "inaccuracy")) wAdvice.push("Warships patrol about 100 tiles around where you send them. Park them by your own ports and trade lanes rather than chasing far-off targets.");
   if (warReviews.length && !ports.length) wAdvice.push("You built warships without any ports: they had no trade to guard. Without ports, a warship mostly helps by hunting enemy transports near your coast.");
@@ -506,14 +512,29 @@ export function analyzeEconomy(view: ReplayView, record: GameRecord, meRec: Play
   const spent = spending.economy + spending.defense + spending.military + spending.nukes;
   const lobbyTrade = median(others.map((m) => share(m) ?? NaN));
   if (!mine.some((s) => s.type === "Port") && (lobbyTrade ?? 0) >= 0.15) {
-    advice.push(`Trade was paying in this lobby: the median human earned ${pct(lobbyTrade ?? 0)} of their gold from trade and trains, and you built no Port. If you hold any coast, a Port 300+ tiles from other players' ports earns 50–130k per trade ship, and both ends get paid.`);
+    advice.push(`Trade was paying in this lobby: the median human earned ${pct(lobbyTrade ?? 0)} of their gold from trade and trains, and you built no Port. If you hold any coast, a Port with partners 300+ tiles away pays about ${fmtNum(tradeShipGold(300))} per ship at 300 tiles and ${fmtNum(tradeShipGold(500))} at 500, to both ends.`);
   }
-  if (you.firstCity !== null && you.firstCity > 150) advice.push(`Your first City came at ${clock(you.firstCity * SEC)} after spawn${benchmark?.firstCity ? `; ${benchmark.name} built theirs at ${clock(benchmark.firstCity * SEC)}` : ""}. Aim for 125k gold, then a City at once, by about 2:30.`);
-  if (you.firstCity === null && me.lifeTicks > 2400) advice.push("You never built a City. It's the best early purchase: each level adds 250k troop cap.");
+  // The first earning building matters more than the first City: winners in
+  // current public lobbies have a Port by ~2:00 and a Factory by ~3:00.
+  const firstIncome = [you.firstPort, you.firstFactory].filter((t): t is number => t !== null).sort((a, b) => a - b)[0] ?? null;
+  const benchIncome = benchmark ? ([benchmark.firstPort, benchmark.firstFactory].filter((t): t is number => t !== null).sort((a, b) => a - b)[0] ?? null) : null;
+  if (firstIncome !== null && firstIncome > 210)
+    advice.push(`Your first Port or Factory came at ${clock(firstIncome * SEC)} after spawn${benchIncome !== null && benchmark ? `; ${benchmark.name} had theirs at ${clock(benchIncome * SEC)}` : ""}. Trade ships and trains pay most of everyone's gold after minute 5, so have one earning by about 3:00.`);
+  if (you.firstCity === null && me.lifeTicks > 2400) advice.push("You never built a City. Once your troops sit at the cap, each City level adds 250k to it.");
   const cities10 = youCounts.City ?? 0;
-  if (cities10 >= 3 && !mine.some((s) => s.type === "Factory")) advice.push(`You had ${cities10} Cities but no Factory. A Factory puts rail between your Cities and Ports within 110 tiles; each train pays 10k per stop at your own Cities and 25–35k at neighbours'.`);
-  if (spent > 0 && spending.economy / spent < 0.4 && me.lifeTicks > 3600) advice.push(`Only ${pct(spending.economy / spent)} of your spending went to the economy (Cities, Ports, Factories). Until minute ~8, most gold should go there.`);
-  if (me.floatMinutes !== null && me.floatMinutes > 3) advice.push(`You sat on ${me.floatMinutes.toFixed(1)} minutes of income on average. Spend as it comes in, unless you're saving for a specific nuke.`);
+  if (cities10 >= 3 && !mine.some((s) => s.type === "Factory"))
+    advice.push(
+      `You had ${cities10} Cities but no Factory. A Factory puts rail between Cities and Ports within 110 tiles, yours or anyone's; each stop pays ${fmtNum(TRAIN_STOP_GOLD.own)} at your own stations, ${fmtNum(TRAIN_STOP_GOLD.teammateOrOther)} at a teammate's or anyone else's and ${fmtNum(TRAIN_STOP_GOLD.ally)} at an ally's, to both the train and station owner.`,
+    );
+  void spent;
+  const siloThreat = me.enemySiloTick !== null;
+  if (me.floatMinutes !== null && me.floatMinutes > 3 && !siloThreat)
+    advice.push(
+      `You sat on ${me.floatMinutes.toFixed(1)} minutes of income on average with no enemy Silo to save against.` +
+        (mode.donations ? " Gold you can't use is worth more in a front-line teammate's hands." : " Spend it on income buildings as it comes in."),
+    );
+  if (mode.bigTeams && mine.some((s) => s.type === "Port") && !actions.some((a) => a.type === "embargo_all"))
+    advice.push("Turn on Stop Trading with Enemies early. A trade ship pays both ports the same, so in a two-sided game every ship to the enemy team pays them as much as you; trade with teammates instead.");
   if (benchmark && benchmark.tradeShare !== null && you.tradeShare !== null && benchmark.tradeShare - you.tradeShare > 0.2) {
     advice.push(`${benchmark.name} made ${pct(benchmark.tradeShare)} of their gold from trade and trains; you made ${pct(you.tradeShare)}. They had ${benchmark.counts10.Port ?? 0} Ports and ${benchmark.counts10.Factory ?? 0} Factories at 10:00; you had ${youCounts.Port ?? 0} and ${youCounts.Factory ?? 0}.`);
   }

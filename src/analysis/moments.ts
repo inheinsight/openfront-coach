@@ -2,8 +2,9 @@ import type { AttackRecord } from "../engine/replayTypes.js";
 import type { GameRecord } from "../openfront/types.js";
 import type { PlayerMetrics } from "./metrics.js";
 import { median } from "./metrics.js";
+import type { PlayMode } from "./mode.js";
 import { ReplayView } from "./replayView.js";
-import { clock, fmtNum, pct, TICKS_PER_SECOND } from "./rules.js";
+import { clock, fmtNum, GOOD_STACK_RATIO, OVERTIME_DROP_PER_MINUTE, OVERTIME_START_MINUTES, pct, TEAM_LEAVE_CREDIT_SHARE, TICKS_PER_SECOND, UNCLAIMED_SPEED_CAP_TROOPS, WIN_LAND_SHARE } from "./rules.js";
 import type { AttackLedgerRow, KeyMoment, Severity } from "./types.js";
 
 const SEC = TICKS_PER_SECOND;
@@ -14,6 +15,7 @@ interface Ctx {
   me: PlayerMetrics;
   all: PlayerMetrics[];
   myId: string | null;
+  mode: PlayMode;
 }
 
 let seq = 0;
@@ -28,6 +30,15 @@ function shareAt(ctx: Ctx, tick: number) {
 function landDelta(ctx: Ctx, tick: number, after = 60 * SEC) {
   const end = Math.min(ctx.view.data.meta.ticks, tick + after);
   return +((shareAt(ctx, end) - shareAt(ctx, tick)) * 100).toFixed(2);
+}
+
+/** What to do instead of an undersized or stalled attack on a player. */
+function stackAdvice(ctx: Ctx, retreated: boolean): string {
+  const base = `Attack players with at least ${GOOD_STACK_RATIO}× the troops they hold at home (bigger still pays), ideally right after they send their army at someone else.`;
+  const commit = retreated ? " A retreat costs 25% of the surviving troops, so only start attacks you can finish." : "";
+  return ctx.mode.bigTeams
+    ? `${base}${commit} If you can't reach that, donate the troops to the teammate who is fighting there: one big stack loses far fewer troops per tile than two small ones.`
+    : `${base}${commit} If you can't reach that, wait and let your troops grow near 42% of your cap.`;
 }
 
 /** Build the attack ledger for the focus player and flag notable attacks. */
@@ -81,15 +92,17 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
       } else if (eliminated && tilesGained > 0) {
         verdict = "good";
         note = `finished off ${view.name(a.target)}`;
-      } else if (a.retreated && significant) {
-        verdict = "inaccuracy";
-        note = "retreated: a retreat from a player forfeits 25% of the surviving troops";
       } else if (tpk !== null && p25 !== null && tpk < p25 && significant && tilesGained < Math.max(30, a.targetTilesStart * 0.1)) {
         verdict = ratio !== null && ratio >= 0.6 && !a.naval ? "blunder" : a.naval ? "inaccuracy" : "mistake";
         note =
           `spent ${fmtNum(troopsUsed)} troops for ${fmtNum(tilesGained)} tiles (${tpk.toFixed(1)} per 1k, bottom quarter ${peers})` +
-          (stackVsArmy < 0.5 ? `; your ${fmtNum(a.troops)} stack was ${pct(stackVsArmy)} of their ${fmtNum(a.targetTroopsStart)} army, and stacks below ~60% of the defender's army pay up to double losses per tile` : "") +
-          (ratio !== null && ratio >= 0.6 ? `; it was a ${pct(ratio)} send` : "");
+          (stackVsArmy <= 0.5
+            ? `; your ${fmtNum(a.troops)} stack was ${pct(stackVsArmy)} of the ${fmtNum(a.targetTroopsStart)} troops they held at home, and at half their home troops or less you pay double losses per tile`
+            : stackVsArmy < 1
+              ? `; your ${fmtNum(a.troops)} stack was smaller than the ${fmtNum(a.targetTroopsStart)} troops they held at home`
+              : "") +
+          (ratio !== null && ratio >= 0.6 ? `; it was a ${pct(ratio)} send` : "") +
+          (a.retreated ? "; you then retreated, which costs 25% of the surviving troops" : "");
       } else if (ratio !== null && ratio >= 0.6 && a.startTick > me.spawnPhaseEndTick + 600 && significant && tilesGained < a.targetTilesStart * 0.25) {
         verdict = "inaccuracy";
         note = `full send (${pct(ratio)} of your troops) left you at ${pct(a.attackerTroopsAfterLaunch / Math.max(1, before))} and took only ${fmtNum(tilesGained)} tiles`;
@@ -139,9 +152,7 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
           suggestion:
             verdict === "good"
               ? undefined
-              : a.retreated
-                ? "Commit or don't start: pick targets you can finish, and let a stalled attack burn out against unclaimed land rather than retreating from a player."
-                : "Hit players who are already fighting someone else, and send a stack at least ~1.7× their whole army (or wait until they are weaker).",
+              : stackAdvice(ctx, a.retreated),
           landShareDelta: landDelta(ctx, a.startTick),
           evidence: {
             sent: a.troops,
@@ -193,9 +204,48 @@ export function attackLedger(ctx: Ctx): { rows: AttackLedgerRow[]; moments: KeyM
   }
   folded.sort((x, y) => y.score - x.score);
   flagged.sort((x, y) => y.score - x.score);
-  const bad = folded.slice(0, 4);
+  // Strong players attack far more often and have the same ~10% of attacks go
+  // badly, so only a high rate of bad attacks is a pattern worth a moment.
+  const judged = rows.filter((r) => (r.targetType === "Human" || r.targetType === "Nation") && r.note !== "joined an attack already under way").length;
+  const badRate = judged ? badAll.length / judged : 0;
+  // What separates winners is stack size, so only undersized attacks become moments.
+  const undersized = (f: (typeof folded)[number]) => {
+    const army = Number(f.m.evidence.targetTroops ?? 0);
+    return army > 0 && Number(f.m.evidence.sent ?? 0) < army;
+  };
+  // ...and only for players whose typical stack is smaller than the defender's home army.
+  const habit = me.stackRatio === null || me.stackRatio < 1;
+  const bad = (habit && (badRate > 0.15 || judged < 4) ? folded : []).filter(undersized).slice(0, 4);
   const good = flagged.filter((f) => f.sev === "good").slice(0, 2);
   return { rows, moments: [...bad, ...good].map((f) => f.m) };
+}
+
+/** Troops at 80%+ of the cap for at least 60 seconds before `tick`: the cap, not gold, was the limit. */
+function capLimitedBefore(ctx: Ctx, tick: number): boolean {
+  const { view, me } = ctx;
+  const troops = view.aligned(me.smallID, "troops");
+  const maxT = view.aligned(me.smallID, "maxTroops");
+  const step = view.data.meta.sampleEvery / SEC;
+  let secs = 0;
+  view.ticks.forEach((t, i) => {
+    if (t > me.spawnPhaseEndTick && t < tick && maxT[i] > 0 && troops[i] / maxT[i] >= 0.8) secs += step;
+  });
+  return secs >= 60;
+}
+
+/** Teammates who were fighting (attacking or attacked) with troops under 60% of their cap at `tick`. */
+function teammatesWithRoom(ctx: Ctx, tick: number): number[] {
+  const { view, me } = ctx;
+  if (me.team === null) return [];
+  return view.data.players
+    .filter((p) => p.type === "Human" && p.team === me.team && p.smallID !== me.smallID && view.valueAt(p.smallID, "alive", tick))
+    .filter((p) => {
+      const cap = view.valueAt(p.smallID, "maxTroops", tick);
+      const fighting = view.valueAt(p.smallID, "attacksOut", tick) + view.valueAt(p.smallID, "attacksIn", tick) > 0;
+      return cap > 0 && fighting && view.valueAt(p.smallID, "troops", tick) / cap < 0.6;
+    })
+    .sort((a, b) => view.valueAt(b.smallID, "tiles", tick) - view.valueAt(a.smallID, "tiles", tick))
+    .map((p) => p.smallID);
 }
 
 function intervals(ticks: number[], pred: (i: number) => boolean, minTicks: number) {
@@ -214,6 +264,12 @@ function intervals(ticks: number[], pred: (i: number) => boolean, minTicks: numb
   return out;
 }
 
+function openingAdvice(avgOpenRatio: number | null): string {
+  return avgOpenRatio !== null && avgOpenRatio >= 0.35
+    ? `Your sends were big. Expansion into open land stops speeding up once an attack holds about ${fmtNum(UNCLAIMED_SPEED_CAP_TROOPS)} troops, and troops away on an attack don't regrow, so click about 20% at a time, again each time the bar refills, and keep two expansion lanes busy.`
+    : "Click about 20% into open land every time the bar refills, along two lanes rather than three. Pick a spawn with open land on at least two sides, and clear bot tribes next to you once you can finish them.";
+}
+
 export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackLedgerRow[] } {
   seq = 0;
   const { view, me, all } = ctx;
@@ -225,21 +281,8 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
   const others = all.filter((m) => m.smallID !== sid);
 
   // ---- Opening --------------------------------------------------------
-  if (me.firstExpansionTick !== null && me.firstExpansionTick - spEnd > 30) {
-    const delay = (me.firstExpansionTick - spEnd) / SEC;
-    moments.push(
-      moment({
-        tick: me.firstExpansionTick,
-        kind: "opening",
-        severity: delay > 10 ? "mistake" : "inaccuracy",
-        title: "Slow first expansion",
-        detail: `Your first expansion went out ${delay.toFixed(0)}s after the spawn phase ended. Every second at the start is land the neighbours take first.`,
-        suggestion: "Have your first big send (60–100% of starting troops) queued the moment the spawn timer ends.",
-        landShareDelta: landDelta(ctx, me.firstExpansionTick),
-        evidence: { delaySeconds: +delay.toFixed(1) },
-      }),
-    );
-  }
+  // Seconds before the first click don't predict anything (almost everyone
+  // clicks within 1–2 s); land at 2:00 and 5:00 do.
   const med60 = median(others.map((o) => o.landShareAt["60"] ?? NaN));
   const med120 = median(others.map((o) => o.landShareAt["120"] ?? NaN));
   const my120 = me.landShareAt["120"];
@@ -259,10 +302,7 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
           detail:
             `At 2:00 after spawn you held ${pct(my120, 2)} of the land; the median human held ${pct(med120, 2)}.` +
             (avgOpenRatio !== null ? ` Your opening sends averaged ${pct(avgOpenRatio)} of your troops.` : ""),
-          suggestion:
-            avgOpenRatio !== null && avgOpenRatio < 0.4
-              ? "Open with bigger sends into unclaimed land (60–70%, or 100% on the very first click), then drop the ratio once you touch neighbours."
-              : "Pick a spawn with open unclaimed land on at least two sides and expand along two lanes, not three.",
+          suggestion: openingAdvice(avgOpenRatio),
           landShareDelta: undefined,
           evidence: { yourShare120: +(my120 * 100).toFixed(2), medianShare120: +(med120 * 100).toFixed(2), avgOpeningRatio: avgOpenRatio === null ? null : +avgOpenRatio.toFixed(2), median60: med60 === null ? null : +(med60 * 100).toFixed(2) },
         }),
@@ -282,6 +322,41 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
     }
   }
 
+  const med300 = median(others.map((o) => o.landShareAt["300"] ?? NaN));
+  const my300 = me.landShareAt["300"];
+  const fellBehindAt2 = moments.some((m) => m.title === "Opening fell behind");
+  if (!fellBehindAt2 && my300 !== null && med300 !== null && med300 > 0 && my300 / med300 < 0.6) {
+    moments.push(
+      moment({
+        tick: spEnd + 300 * SEC,
+        kind: "opening",
+        severity: my300 / med300 < 0.35 ? "mistake" : "inaccuracy",
+        title: "Fell behind by 5:00",
+        detail: `At 5:00 after spawn you held ${pct(my300, 2)} of the land; the median human held ${pct(med300, 2)}. Land at 5:00 is the strongest early predictor of where you finish.`,
+        suggestion: "Between 2:00 and 5:00, keep clearing the bot tribes and open land around you with small clicks, and get a Port or Factory earning; don't start a war with a human neighbour until you can send at least their home army.",
+        evidence: { yourShare300: +(my300 * 100).toFixed(2), medianShare300: +(med300 * 100).toFixed(2) },
+      }),
+    );
+  }
+  // Big sends that leave nothing at home are how most early eliminations start.
+  if (me.openingDrainedPct !== null && me.openingDrainedPct >= 0.3) {
+    const diedEarly = me.eliminatedTick !== null && me.eliminatedTick - spEnd < 300 * SEC;
+    moments.push(
+      moment({
+        tick: spEnd + 30 * SEC,
+        kind: "troops",
+        severity: diedEarly ? "mistake" : "inaccuracy",
+        title: "Army drained in the opening",
+        detail:
+          `For ${pct(me.openingDrainedPct)} of the first three minutes your troops at home were under 15% of your cap.` +
+          (diedEarly ? ` You were eliminated at ${clock(me.eliminatedTick! - spEnd)} after spawn.` : "") +
+          " Troops away on an attack don't regrow, and an empty border invites the neighbours" + (ctx.mode.nations ? " and the nations, which go after weak neighbours first." : "."),
+        suggestion: "Keep at least a quarter of your cap at home in the first three minutes: click about 20% at a time, and only send more into land no player can reach you from.",
+        evidence: { drainedShare: +me.openingDrainedPct.toFixed(2), eliminatedEarly: diedEarly },
+      }),
+    );
+  }
+
   // ---- Attacks ----------------------------------------------------------
   const { rows: ledger, moments: attackMoments } = attackLedger(ctx);
   moments.push(...attackMoments);
@@ -299,18 +374,36 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       (i) => ticks[i] > spEnd && ticks[i] <= end && !!alive[i] && maxT[i] > 0 && troops[i] / maxT[i] >= 0.88 && atk[i] === 0,
       30 * SEC,
     ).sort((a, b) => b.end - b.start - (a.end - a.start));
-    for (const r of capRuns.slice(0, 2)) {
+    // A late-game FFA leader sitting on a full army is holding a deterrent, not idling.
+    const leading = (t: number) => {
+      const mine = view.valueAt(sid, "tiles", t);
+      return view.trackedPlayers().filter((p) => p.smallID !== sid && view.valueAt(p.smallID, "tiles", t) > mine).length < 5;
+    };
+    // In team games a carry sits at the cap because teammates feed it: only
+    // flag it when you weren't being fed and someone fighting had room.
+    const fedDuring = (r: { start: number; end: number }) =>
+      !!ctx.myId && view.data.events.some((e) => e.kind === "DonateEvent" && e.recipientId === ctx.myId && e.donationType === "troops" && e.tick >= r.start - 300 && e.tick <= r.end);
+    const runs = capRuns.filter((r) =>
+      ctx.mode.teammates && ctx.mode.donations ? !fedDuring(r) && teammatesWithRoom(ctx, r.start).length > 0 : ctx.mode.teammates || r.start - spEnd < 600 * SEC || !leading(r.start),
+    );
+    for (const r of runs.slice(0, 2)) {
       const dur = (r.end - r.start) / SEC;
+      const roomy = ctx.mode.donations ? teammatesWithRoom(ctx, r.start) : [];
       moments.push(
         moment({
           tick: r.start,
           kind: "troops",
           severity: dur >= 90 ? "mistake" : "inaccuracy",
           title: `Army idle at the troop cap for ${dur.toFixed(0)}s`,
-          detail: `From ${clock(r.start)} to ${clock(r.end)} your troops sat above 88% of the cap with no attack running. Troop growth falls to zero at the cap and peaks around 42%.`,
-          suggestion: "When the bar is nearly full, spend it: take land from bots or a weak neighbour, or build a City to raise the cap.",
+          detail:
+            `From ${clock(r.start)} to ${clock(r.end)} your troops sat above 88% of the cap with no attack running. Troop growth falls to zero at the cap and peaks around 42%.` +
+            (roomy.length ? ` Meanwhile ${roomy.map((x) => view.name(x)).join(" and ")} had room for more troops.` : ""),
+          suggestion: ctx.mode.teammates
+            ? `When the bar passes about half, donate 30–40% of your troops to the teammate who is fighting${roomy.length ? ` (${view.name(roomy[0])} here)` : ""}, or take land from bots on the enemy side.`
+            : "When the bar is nearly full, spend it: take land from bots or a weak neighbour, or build a City to raise the cap.",
+          focus: roomy.slice(0, 2),
           landShareDelta: landDelta(ctx, r.start),
-          evidence: { seconds: dur, troops: troops[r.i0], cap: maxT[r.i0] },
+          evidence: { seconds: dur, troops: troops[r.i0], cap: maxT[r.i0], teammatesWithRoom: roomy.length },
         }),
       );
     }
@@ -319,7 +412,10 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
       (i) => ticks[i] > spEnd + 300 && ticks[i] <= end && !!alive[i] && maxT[i] > 0 && troops[i] / maxT[i] < 0.12 && inc[i] > troops[i],
       10 * SEC,
     );
-    for (const r of overRuns.slice(0, 2)) {
+    // Only when you emptied the army yourself (a big send just before) and it cost you land.
+    const selfInflicted = (r: { start: number }) =>
+      view.data.attacks.some((a) => a.attacker === sid && a.startTick >= r.start - 30 * SEC && a.startTick <= r.start && a.troops >= 0.4 * (a.troops + a.attackerTroopsAfterLaunch));
+    for (const r of overRuns.filter((r) => selfInflicted(r) && landDelta(ctx, r.start) <= -0.1 * shareAt(ctx, r.start) * 100).slice(0, 2)) {
       const hitters = [...new Set(view.data.attacks.filter((a) => a.target === sid && a.startTick <= r.end && (a.endTick ?? a.lastTick) >= r.start).map((a) => a.attacker))];
       moments.push(
         moment({
@@ -328,8 +424,10 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
           focus: hitters.slice(0, 3),
           severity: "mistake",
           title: "Caught with an empty army",
-          detail: `At ${clock(r.start)} you were under attack by ${fmtNum(inc[r.i0])} troops while holding only ${fmtNum(troops[r.i0])} (${pct(troops[r.i0] / Math.max(1, maxT[r.i0]))} of your cap).`,
-          suggestion: "Keep 35–50% of your cap at home whenever a neighbour can reach you; only full-send when nobody can punish it.",
+          detail: `At ${clock(r.start)}, just after a big send of your own, you were under attack by ${fmtNum(inc[r.i0])} troops while holding only ${fmtNum(troops[r.i0])} at home (${pct(troops[r.i0] / Math.max(1, maxT[r.i0]))} of your cap).`,
+          suggestion: ctx.mode.teammates
+            ? "Keep 35–50% of your cap at home whenever an enemy can reach you, and ask a teammate for troops before the border breaks, not after."
+            : "Keep 35–50% of your cap at home whenever a neighbour can reach you; only full-send when nobody can punish it.",
           landShareDelta: landDelta(ctx, r.start),
           evidence: { troops: troops[r.i0], incoming: inc[r.i0], cap: maxT[r.i0] },
         }),
@@ -386,14 +484,20 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
         detail: `${clock(t0)}–${clock(t1)}: ${causes.join("; ") || "pressure on several fronts"}.`,
         suggestion:
           otherFronts.length && main
-            ? "Avoid two-front wars: before attacking, check who borders you and whether they are free to hit you back."
+            ? ctx.mode.bigTeams
+              ? "Don't open a second front while one is under pressure: ask a teammate to cover it, and send your troops where the team is pushing."
+              : "Avoid two-front wars: before attacking, check who borders you and whether they are free to hit you back."
             : nukes.length
-              ? "Cover your core with overlapping SAM launchers once rivals can afford nukes (around minute 5+)."
+              ? `Get SAM cover over your Cities as soon as an enemy builds a Missile Silo${ctx.mode.teammates ? "; a teammate's SAM in range protects you too" : ""}.`
               : troopRatio < 0.25
-                ? "Don't let your army drain below ~35% of the cap when a strong neighbour is idle."
+                ? ctx.mode.teammates
+                  ? "Don't let your army drain below ~35% of the cap on a live front, and ask for troops before you collapse."
+                  : "Don't let your army drain below ~35% of the cap when a strong neighbour is idle."
                 : dps === 0
-                  ? "Put a Defense Post on the border you expect to be hit; it multiplies attacker losses."
-                  : "Ally or make peace with one side before a bigger neighbour turns on you.",
+                  ? "Put a Defense Post where you're being hit, on high ground if you can: attackers lose about 5× as many troops near it, and far more on mountains."
+                  : ctx.mode.bigTeams
+                    ? "Ask teammates for troops early, and fall back toward them rather than fighting alone."
+                    : "Ally or make peace with one side before a bigger neighbour turns on you.",
         landShareDelta: +((-(tiles[d.i] - tiles[d.i + win]) / view.landTiles) * 100).toFixed(2),
         evidence: {
           tilesBefore: tiles[d.i],
@@ -453,18 +557,18 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
         evidence: { minutes: Math.round(gameSecs / 60) },
       }),
     );
-  } else if (me.firstCityTick !== null && me.firstCityTick - spEnd > 180 * SEC) {
+  } else if (me.firstCityTick !== null && me.firstCityTick - spEnd > 180 * SEC && capLimitedBefore(ctx, me.firstCityTick)) {
     moments.push(
       moment({
         tick: me.firstCityTick,
         kind: "economy",
         severity: me.firstCityTick - spEnd > 300 * SEC ? "mistake" : "inaccuracy",
         title: "Late first City",
-        detail: `Your first City went down at ${clock(me.firstCityTick - spEnd)} after spawn. The median human built theirs at ${(() => {
+        detail: `Your first City went down at ${clock(me.firstCityTick - spEnd)} after spawn, after your troops had sat near the cap for a minute or more. The median human built theirs at ${(() => {
           const m = median(others.map((o) => (o.firstCityTick === null ? NaN : o.firstCityTick - o.spawnPhaseEndTick)));
           return m === null ? "—" : clock(m);
         })()}.`,
-        suggestion: "Aim for the first City by ~2:30 after spawn; it pays for itself in troop cap almost immediately.",
+        suggestion: "Build a City as soon as the troop cap is what's holding you back: +250k cap is worth more than doubling a small army.",
         evidence: { firstCitySeconds: (me.firstCityTick - spEnd) / SEC },
       }),
     );
@@ -474,10 +578,13 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
     const alive = view.aligned(sid, "alive");
     const incomePerSec = me.goldEarned / Math.max(1, me.lifeTicks / SEC);
     const threshold = Math.max(1_500_000, incomePerSec * 240);
-    const hoards = intervals(ticks, (i) => ticks[i] > spEnd && !!alive[i] && gold[i] > threshold, 120 * SEC).sort((a, b) => b.end - b.start - (a.end - a.start));
+    // Before 15:00 only: later, big banks are SAM, bomb and MIRV money (nations' Silos aren't tracked).
+    const hoards = intervals(ticks, (i) => ticks[i] > spEnd && ticks[i] < spEnd + 900 * SEC && !!alive[i] && gold[i] > threshold, 120 * SEC).sort((a, b) => b.end - b.start - (a.end - a.start));
     for (const h of hoards.slice(0, 1)) {
       const spentAfter = view.data.actions.find((a) => a.clientID === me.clientID && a.type === "build_unit" && a.tick >= h.end - 50 && a.tick <= h.end + 600 && (a.cost ?? 0) >= threshold * 0.6);
       if (spentAfter) continue; // saving up for something big is fine
+      // Once rivals own Silos, a bank is SAM money and a deterrent.
+      if (me.enemySiloTick !== null && me.enemySiloTick <= h.end) continue;
       moments.push(
         moment({
           tick: h.start,
@@ -485,7 +592,9 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
           severity: (h.end - h.start) / SEC > 300 ? "mistake" : "inaccuracy",
           title: "Gold piled up unspent",
           detail: `From ${clock(h.start)} to ${clock(h.end)} you held more than ${fmtNum(threshold)} gold (peaking at ${fmtNum(Math.max(...gold.slice(h.i0, h.i1 + 1)))}) without a big purchase.`,
-          suggestion: "Unspent gold does nothing. Convert it into Cities (troop cap), Ports/Factories (income), or SAMs once nukes are in play.",
+          suggestion: ctx.mode.donations
+            ? "Gold with nothing to buy should go to a teammate who can use it (a front-liner's Cities and Defense Posts), or into Ports and Factories that link to your teammates."
+            : "Gold with nothing to buy does nothing: put it into Ports and Factories (income), a City if the cap is holding you back, or a Silo and SAM once rivals have them.",
           evidence: { peakGold: Math.max(...gold.slice(h.i0, h.i1 + 1)), seconds: (h.end - h.start) / SEC },
         }),
       );
@@ -497,7 +606,9 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
           kind: "economy",
           severity: "mistake",
           title: `Died with ${fmtNum(me.goldAtEnd)} gold in the bank`,
-          detail: "That gold could have been Defense Posts on the front, a SAM, or a City to raise the troop cap during the final fight.",
+          detail: ctx.mode.donations
+            ? "Donate your gold to a teammate before you fall: it does nothing in an eliminated bank, and a teammate can turn it into Defense Posts, a SAM or Cities."
+            : "That gold could have been Defense Posts on the front, a SAM, or a City to raise the troop cap during the final fight.",
           evidence: { gold: me.goldAtEnd },
         }),
       );
@@ -507,22 +618,27 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
   // ---- Diplomacy ---------------------------------------------------------
   for (const e of view.data.events.filter((e) => e.kind === "BrokeAlliance" && (e.traitorID === sid || e.betrayedID === sid))) {
     if (e.traitorID === sid) {
-      const d = landDelta(ctx, e.tick, 90 * SEC);
+      const window = ctx.mode.teammates ? 90 : 180;
+      const d = landDelta(ctx, e.tick, window * SEC);
       moments.push(
         moment({
           tick: e.tick,
           kind: "diplomacy",
           focus: [e.betrayedID as number],
-          severity: d > 1 ? "good" : d < -1 ? "mistake" : "inaccuracy",
+          // Strong FFA players betray often; report the outcome, don't grade the choice.
+          severity: d > 1 ? "good" : "info",
           title: `You betrayed ${view.name(e.betrayedID as number)}`,
-          detail: `Breaking the alliance marked you a traitor for 30s (attackers lose half as many troops against you) and soured every neighbour's opinion of you. Your land share moved ${d >= 0 ? "+" : ""}${d.toFixed(1)} points over the next 90s.`,
+          detail: `Breaking the alliance marked you a traitor for 30s (attackers lose half as many troops against you and take your land about 25% faster) and cost you relations with nearby players. Your land share moved ${d >= 0 ? "+" : ""}${d.toFixed(1)} points over the next ${window}s.`,
           suggestion: d > 1 ? undefined : "Only betray when the payoff is immediate and nobody else can punish your 30-second traitor window.",
           landShareDelta: d,
-          evidence: { landShareDelta90s: d },
+          evidence: { landShareDelta: d, windowSeconds: window },
         }),
       );
     } else {
       const ratio = view.valueAt(sid, "troops", e.tick) / Math.max(1, view.valueAt(sid, "maxTroops", e.tick));
+      const traitor = e.traitorID as number;
+      const outnumbered = view.valueAt(traitor, "troops", e.tick) / Math.max(1, view.valueAt(sid, "troops", e.tick));
+      const isNation = view.type(traitor) === "Nation";
       moments.push(
         moment({
           tick: e.tick,
@@ -530,30 +646,50 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
           focus: [e.traitorID as number],
           severity: "info",
           title: `${view.name(e.traitorID as number)} broke your alliance`,
-          detail: `Your army was at ${pct(ratio)} of its cap when it happened.` + (ratio < 0.25 ? " Hard and Impossible nations betray allies whose troops fall below about 20% of their cap." : ""),
-          suggestion: ratio < 0.25 ? "An ally is only as reliable as your army is strong. Keep a reserve even when allied." : undefined,
+          detail:
+            `Your army was at ${pct(ratio)} of its cap, and they had ${outnumbered.toFixed(1)}× your troops.` +
+            (isNation ? " Medium nations betray an ally once they hold 10× its troops, or 3× when it is their only neighbour." : ""),
+          suggestion: isNation && outnumbered >= 3 ? "An ally is only as reliable as your army is strong: keep enough troops at home that no allied nation outnumbers you 3 to 1." : undefined,
           landShareDelta: landDelta(ctx, e.tick),
-          evidence: { troopRatio: +ratio.toFixed(2) },
+          evidence: { troopRatio: +ratio.toFixed(2), theirTroopsVsYours: +outnumbered.toFixed(2), nation: isNation },
         }),
       );
     }
   }
 
   // ---- Nukes ---------------------------------------------------------------
+  // Judged on how fast SAM cover followed the first enemy Silo, not on how
+  // many nukes came in: leaders get nuked whatever they do.
   const incomingNukes = view.data.events.filter((e) => e.kind === "UnitIncoming" && e.playerID === sid && [4, 5, 7].includes(e.messageType as number));
-  if (incomingNukes.length >= 2) {
-    const first = incomingNukes[0];
-    const samsThen = view.unitCountAt(sid, "SAM Launcher", first.tick);
-    if (samsThen === 0) {
+  // Judged on how soon SAM cover followed the first enemy Silo, not on how
+  // many nukes came in: leaders draw the nukes, and attackers aim at
+  // uncovered land on purpose.
+  if (me.enemySiloTick !== null && me.samDelaySec !== null) {
+    const never = me.samDelaySec >= 9999;
+    const coverTick = never ? null : me.enemySiloTick + me.samDelaySec * SEC;
+    const before = incomingNukes.filter((e) => coverTick === null || e.tick < coverTick).length;
+    const late = me.samDelaySec > 120 && before >= 1;
+    if (late || me.nukesWithoutOwnSam >= 3) {
       moments.push(
         moment({
-          tick: first.tick,
+          tick: late ? me.enemySiloTick : (incomingNukes[0]?.tick ?? me.enemySiloTick),
           kind: "nuke",
-          severity: incomingNukes.length >= 4 ? "mistake" : "inaccuracy",
-          title: `${incomingNukes.length} nukes launched at you with no SAM cover`,
-          detail: `The first nuke was inbound at ${clock(first.tick)} and you had no SAM Launcher.`,
-          suggestion: "From minute ~5, put 1–2 SAMs over your densest Cities; a level-1 SAM covers 70 tiles.",
-          evidence: { nukes: incomingNukes.length, samsAtFirstNuke: samsThen },
+          severity: (late && never && before >= 2) || me.nukesWithoutOwnSam >= 5 ? "mistake" : "inaccuracy",
+          title: late
+            ? never
+              ? "No SAM cover after enemies built Missile Silos"
+              : `SAM cover came ${Math.round(me.samDelaySec)}s after the first enemy Silo`
+            : `${me.nukesWithoutOwnSam} nukes hit you while you had no SAM of your own`,
+          detail:
+            `The first enemy Missile Silo (or nuke at you) appeared at ${clock(me.enemySiloTick)}` +
+            (late
+              ? never
+                ? " and none of your Cities was ever under a SAM."
+                : `; your first City came under a SAM at ${clock(coverTick!)}, after ${before} nuke${before > 1 ? "s" : ""} had been launched at you.`
+              : `. ${me.nukesWithoutOwnSam} nukes were aimed at your uncovered land while you relied on ${ctx.mode.teammates ? "teammates' SAMs" : "luck"}.`) +
+            " A SAM takes 30s to build and a Hydrogen bomb arrives in about 10, so cover has to be up before the launch.",
+          suggestion: `Build a SAM (1.5M) over your densest Cities within a minute of the first enemy Silo, and add one where you build new Cities${ctx.mode.teammates ? "; a teammate's SAM covers you only within its 70-tile range" : ""}. A level-1 SAM never misses.`,
+          evidence: { samDelaySec: never ? null : Math.round(me.samDelaySec), nukesBeforeCover: before, nukesWithoutOwnSam: me.nukesWithoutOwnSam, nukesTotal: incomingNukes.length },
         }),
       );
     }
@@ -581,10 +717,92 @@ export function detectMoments(ctx: Ctx): { moments: KeyMoment[]; ledger: AttackL
         severity: me.boatsLost >= 6 ? "mistake" : "inaccuracy",
         title: `${me.boatsLost} of ${me.boatsSent} transport boats lost`,
         detail: "A sunk transport loses every troop on board.",
-        suggestion: "Check for enemy warships before sailing, send several smaller boats rather than one big one, and escort landings with your own warship.",
+        suggestion: "Check for enemy warships before sailing: they shoot transports first. Use tiny boats (about 1% of your troops) to grab footholds, and send big ones only where no enemy warship patrols (you can have at most 3 at sea).",
         evidence: { boatsSent: me.boatsSent, boatsLost: me.boatsLost },
       }),
     );
+  }
+
+  // ---- Panic counter-attack ------------------------------------------------
+  // Opposing attacks cancel troop for troop, so throwing most of your army at
+  // a bigger incoming push mostly turns your reserve into nothing.
+  const panics = view.data.actions
+    .filter((a) => a.clientID === me.clientID && a.type === "attack" && a.target && (a.targetType === "Human" || a.targetType === "Nation") && (a.sent ?? 0) >= 0.5 * Math.max(1, a.troops ?? 0))
+    .map((a) => {
+      const incoming = view.data.attacks
+        .filter((x) => x.attacker === a.target && x.target === sid && x.startTick <= a.tick && (x.endTick ?? x.lastTick) >= a.tick)
+        .reduce((sum, x) => sum + x.troops, 0);
+      return { a, incoming };
+    })
+    .filter((p) => p.incoming > 1.5 * (p.a.sent ?? 0))
+    .filter((p) => (p.a.troops ?? 0) - (p.a.sent ?? 0) < 0.2 * Math.max(1, p.a.maxTroops ?? 0))
+    .filter((p) => landDelta(ctx, p.a.tick) <= -0.15 * shareAt(ctx, p.a.tick) * 100)
+    .sort((x, y) => (y.a.sent ?? 0) - (x.a.sent ?? 0));
+  if (panics[0]) {
+    const { a, incoming } = panics[0];
+    moments.push(
+      moment({
+        tick: a.tick,
+        kind: "attack",
+        focus: [a.target as number],
+        severity: "mistake",
+        title: `Counter-attacked ${view.name(a.target)}'s bigger push with ${pct((a.sent ?? 0) / Math.max(1, a.troops ?? 1))} of your army`,
+        detail: `${clock(a.tick)}: ${view.name(a.target)} was attacking you with ${fmtNum(incoming)} troops and you answered with ${fmtNum(a.sent ?? 0)}. Opposing attacks cancel troop for troop before any land changes hands, so a smaller counter mostly empties your home army.`,
+        suggestion: ctx.mode.teammates
+          ? "Against a bigger push, defend at home: wear it down with small clicks, drop a Defense Post on high ground in its path, and ask a teammate for troops."
+          : "Against a bigger push, defend at home: wear it down with small clicks, drop a Defense Post on high ground in its path, and offer an alliance once it stalls.",
+        landShareDelta: landDelta(ctx, a.tick),
+        evidence: { sent: a.sent ?? 0, incoming, ratio: +((a.sent ?? 0) / Math.max(1, a.troops ?? 1)).toFixed(2) },
+      }),
+    );
+  }
+
+  // ---- Leaving a team game while alive ----------------------------------------
+  if (ctx.mode.teammates && me.team !== null) {
+    const marks = view.data.actions.filter((a) => a.clientID === me.clientID && a.type === "mark_disconnected");
+    const last = marks[marks.length - 1];
+    const decided = view.data.events.find((e) => e.kind === "Win")?.tick ?? view.data.meta.ticks;
+    if (last?.isDisconnected && view.valueAt(sid, "alive", last.tick) && decided - last.tick > 60 * SEC) {
+      const mates = view.data.players.filter((p) => p.type === "Human" && p.team === me.team);
+      const teamShare = mates.reduce((a, p) => a + view.valueAt(p.smallID, "tiles", last.tick), 0) / view.landTiles;
+      const w = ctx.record.info.winner;
+      const teamWon = !!w && w[0] === "team" && w[1] === me.team;
+      if (teamShare < TEAM_LEAVE_CREDIT_SHARE) {
+        moments.push(
+          moment({
+            tick: last.tick,
+            kind: "death",
+            severity: teamWon ? "mistake" : "inaccuracy",
+            title: "Left the game while still alive",
+            detail:
+              `You disconnected at ${clock(last.tick)} while your team held ${pct(teamShare)} of the land.` +
+              (teamWon ? " Your team went on to win, but a player who leaves alive only keeps the win if the team already held 70% of the land." : " Your land was left for the enemy to take."),
+            suggestion: "Stay connected to the end, even with a tiny territory: eliminated or not, a connected teammate shares the win, and your land isn't handed to the enemy.",
+            evidence: { teamShare: +teamShare.toFixed(3), teamWon },
+          }),
+        );
+      }
+    }
+  }
+
+  // ---- FFA overtime ------------------------------------------------------------
+  const otTick = OVERTIME_START_MINUTES * 60 * SEC;
+  if (ctx.mode.overtime && view.data.meta.ticks > otTick + 60 * SEC && end > otTick) {
+    const mine = view.valueAt(sid, "tiles", otTick);
+    const rank = 1 + view.trackedPlayers().filter((p) => p.smallID !== sid && view.valueAt(p.smallID, "tiles", otTick) > mine).length;
+    if (rank >= 2 && rank <= 3) {
+      moments.push(
+        moment({
+          tick: otTick,
+          kind: "victory",
+          severity: "info",
+          title: `Overtime began with you in ${rank === 2 ? "second" : "third"} place`,
+          detail: `From ${OVERTIME_START_MINUTES}:00 the win bar drops ${OVERTIME_DROP_PER_MINUTE * 100} points a minute from ${WIN_LAND_SHARE * 100}%, so whoever leads only has to hold on.`,
+          suggestion: "In overtime, waiting loses: break the leader (nukes on their densest land, or a joint attack with whoever else borders them) while the bar is still high, or keep enough troops to stop them crossing it.",
+          evidence: { rank, landShare: +(mine / view.landTiles).toFixed(3) },
+        }),
+      );
+    }
   }
 
   // ---- Outcome -------------------------------------------------------------

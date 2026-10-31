@@ -55,7 +55,7 @@ export interface MetricLine {
 }
 
 export interface CategoryScore {
-  key: "expansion" | "economy" | "buildings" | "troops" | "combat" | "defense" | "diplomacy" | "naval" | "nuclear";
+  key: "expansion" | "economy" | "buildings" | "troops" | "combat" | "defense" | "teamwork" | "diplomacy" | "naval" | "nuclear";
   label: string;
   score: number; // 0-100
   grade: string;

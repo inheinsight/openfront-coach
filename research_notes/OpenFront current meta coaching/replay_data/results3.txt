@@ -1,0 +1,195 @@
+==== A. Attack outcome by stack size relative to defender's army (all human attacks on players, excl. merged) ====
+
+-- TEAM(22): bucket | n attacks | pooled tiles/1k used | median tiles/1k | share that eliminated target | share taking ≥10% of target tiles(approx) | share by TOP5 attackers
+0–0.3× | 3842 | 8.3 | 10.1 | 0% | — | 14%
+0.3–0.6× | 2888 | 6.7 | 6.9 | 1% | — | 22%
+0.6–1× | 2242 | 8.0 | 8.7 | 2% | — | 30%
+1–1.7× | 1861 | 13.3 | 13.8 | 5% | — | 36%
+1.7–3× | 1177 | 17.6 | 21.1 | 9% | — | 46%
+3–∞× | 1929 | 22.4 | 29.3 | 13% | — | 45%
+  pooled tiles/1k by bucket, TOP5 attackers: 0-0.3: 11.8 (n529); 0.3-0.6: 8.6 (n642); 0.6-1: 8.7 (n674); 1-1.7: 15.9 (n676); 1.7-3: 20.4 (n539); 3-inf: 25.0 (n869)
+  pooled tiles/1k by bucket, other attackers: 0-0.3: 7.4 (n3313); 0.3-0.6: 5.8 (n2246); 0.6-1: 7.3 (n1568); 1-1.7: 10.5 (n1185); 1.7-3: 12.9 (n638); 3-inf: 17.3 (n1060)
+  naval attacks n1560 pooled 14.6 tiles/1k; land n12382 pooled 12.6
+
+-- FFA(6): bucket | n attacks | pooled tiles/1k used | median tiles/1k | share that eliminated target | share taking ≥10% of target tiles(approx) | share by TOP5 attackers
+0–0.3× | 1159 | 6.9 | 9.2 | 0% | — | 20%
+0.3–0.6× | 776 | 5.2 | 7.2 | 1% | — | 17%
+0.6–1× | 680 | 8.7 | 9.0 | 3% | — | 25%
+1–1.7× | 682 | 12.7 | 16.3 | 9% | — | 33%
+1.7–3× | 460 | 22.7 | 25.1 | 18% | — | 43%
+3–∞× | 656 | 27.2 | 32.7 | 23% | — | 45%
+  pooled tiles/1k by bucket, TOP5 attackers: 0-0.3: 9.3 (n236); 0.3-0.6: 5.1 (n129); 0.6-1: 11.0 (n169); 1-1.7: 13.5 (n226); 1.7-3: 23.8 (n200); 3-inf: 26.3 (n296)
+  pooled tiles/1k by bucket, other attackers: 0-0.3: 5.6 (n923); 0.3-0.6: 5.3 (n647); 0.6-1: 6.6 (n511); 1-1.7: 11.5 (n456); 1.7-3: 20.3 (n260); 3-inf: 29.0 (n360)
+  naval attacks n818 pooled 11.5 tiles/1k; land n3596 pooled 14.7
+
+==== B. Send-ratio habits (attack/boat intents after the first minute) ====
+
+-- TEAM(22)
+TOP5 (players 110, intents 15459): pooled share at 18–22% 36%, ≥50% 9%, ≥60% 6%, ≤12% 7%; per-player median share at default 30%, players with any ≥60% send 47%; opening: intents in first 15s median 4, troops committed in first 15s (sum of sends / troops at first send) median 110%, intents in first 60s median 17
+TOP1 (players 22, intents 4418): pooled share at 18–22% 30%, ≥50% 6%, ≥60% 3%, ≤12% 6%; per-player median share at default 31%, players with any ≥60% send 45%; opening: intents in first 15s median 4, troops committed in first 15s (sum of sends / troops at first send) median 93%, intents in first 60s median 15
+REST (players 1007, intents 62703): pooled share at 18–22% 40%, ≥50% 6%, ≥60% 4%, ≤12% 15%; per-player median share at default 35%, players with any ≥60% send 30%; opening: intents in first 15s median 5, troops committed in first 15s (sum of sends / troops at first send) median 117%, intents in first 60s median 19
+ME (players 13, intents 1268): pooled share at 18–22% 34%, ≥50% 11%, ≥60% 9%, ≤12% 4%; per-player median share at default 45%, players with any ≥60% send 62%; opening: intents in first 15s median 5, troops committed in first 15s (sum of sends / troops at first send) median 123%, intents in first 60s median 22
+
+-- FFA(6)
+TOP5 (players 30, intents 3869): pooled share at 18–22% 20%, ≥50% 3%, ≥60% 2%, ≤12% 37%; per-player median share at default 6%, players with any ≥60% send 37%; opening: intents in first 15s median 4, troops committed in first 15s (sum of sends / troops at first send) median 87%, intents in first 60s median 19
+TOP1 (players 6, intents 956): pooled share at 18–22% 14%, ≥50% 3%, ≥60% 1%, ≤12% 48%; per-player median share at default 3%, players with any ≥60% send 50%; opening: intents in first 15s median 5, troops committed in first 15s (sum of sends / troops at first send) median 112%, intents in first 60s median 20
+REST (players 244, intents 12784): pooled share at 18–22% 42%, ≥50% 4%, ≥60% 2%, ≤12% 20%; per-player median share at default 42%, players with any ≥60% send 29%; opening: intents in first 15s median 5, troops committed in first 15s (sum of sends / troops at first send) median 120%, intents in first 60s median 19
+ME (players 1, intents 77): pooled share at 18–22% 42%, ≥50% 1%, ≥60% 1%, ≤12% 44%; per-player median share at default 42%, players with any ≥60% send 100%; opening: intents in first 15s median 5, troops committed in first 15s (sum of sends / troops at first send) median 71%, intents in first 60s median 29
+
+==== C. Coach attack ledger verdicts per attack (attacks on players) ====
+
+-- TEAM(22)
+TOP5: attacks 8619; blunder 2.2%, mistake 3.6%, inaccuracy 3.3%, good 11.0%; per-player median bad share 8%
+TOP1: attacks 2719; blunder 1.2%, mistake 2.8%, inaccuracy 2.9%, good 14.2%; per-player median bad share 6%
+REST: attacks 24718; blunder 2.1%, mistake 4.6%, inaccuracy 3.0%, good 3.1%; per-player median bad share 8%
+ME: attacks 385; blunder 6.2%, mistake 2.6%, inaccuracy 4.4%, good 1.8%; per-player median bad share 13%
+
+-- FFA(6)
+TOP5: attacks 2326; blunder 0.5%, mistake 2.8%, inaccuracy 1.5%, good 16.3%; per-player median bad share 4%
+TOP1: attacks 610; blunder 0.5%, mistake 2.3%, inaccuracy 1.8%, good 22.6%; per-player median bad share 4%
+REST: attacks 6381; blunder 0.9%, mistake 5.8%, inaccuracy 2.4%, good 6.1%; per-player median bad share 9%
+ME: attacks 30; blunder 6.7%, mistake 3.3%, inaccuracy 0.0%, good 13.3%; per-player median bad share 10%
+
+==== D. Donations in team games: timing vs leadership ====
+TOP1 (n22): troops received by 3:00 median 0k, by 5:00 761k, by 10:00 8032k, total 20388k; first receipt median 204s; troops sent median 309k; first send median 365s; share receiving >1M by 5:00 45%
+TOP5 (n110): troops received by 3:00 median 0k, by 5:00 261k, by 10:00 2661k, total 6657k; first receipt median 230s; troops sent median 1075k; first send median 280s; share receiving >1M by 5:00 28%
+REST_ACTIVE (n1007): troops received by 3:00 median 0k, by 5:00 0k, by 10:00 102k, total 198k; first receipt median 198s; troops sent median 345k; first send median 184s; share receiving >1M by 5:00 13%
+WIN (n338): troops received by 3:00 median 0k, by 5:00 0k, by 10:00 126k, total 328k; first receipt median 206s; troops sent median 1608k; first send median 189s; share receiving >1M by 5:00 16%
+ME (n15): troops received by 3:00 median 0k, by 5:00 0k, by 10:00 0k, total 0k; first receipt median 289s; troops sent median 288k; first send median 214s; share receiving >1M by 5:00 7%
+eventual peak #1 was already their team's land leader at 5:00 in 12/22 team games
+TOP1 troops received / own peak troops: median 237%
+AUC(peak share) winners vs losers among active team players: 0.53
+  teams=2: games 7, AUC(peak share) win vs lose 0.48, AUC(share@5:00) 0.51
+  teams=3: games 1, AUC(peak share) win vs lose 0.79, AUC(share@5:00) 0.64
+  teams=4: games 2, AUC(peak share) win vs lose 0.60, AUC(share@5:00) 0.58
+  teams=5: games 4, AUC(peak share) win vs lose 0.63, AUC(share@5:00) 0.53
+  teams=6: games 1, AUC(peak share) win vs lose 0.45, AUC(share@5:00) 0.57
+  teams=7: games 4, AUC(peak share) win vs lose 0.58, AUC(share@5:00) 0.44
+  teams=Trios: games 1, AUC(peak share) win vs lose 0.95, AUC(share@5:00) 0.95
+  teams=Quads: games 2, AUC(peak share) win vs lose 0.88, AUC(share@5:00) 0.67
+winning team: biggest member's share of the team's summed peak land, median 33% [Trios:70%, 5:29%, 2:15%, Quads:62%, 5:22%, 2:30%, 4:30%, 7:36%, 4:48%, 5:35%, Quads:51%, 2:20%, 3:31%, 2:30%, 6:71%, 2:15%, 7:60%, 7:92%, 2:21%, 5:59%, 7:43%, 2:22%]
+
+==== E. Coach rule firing per minute alive and detail of the City-wait rule ====
+
+-- TEAM(22)
+TOP5 n110: first-City wait (s) median 9 p75 26; all new-City waits median 26, share >60s 28%; idle-at-cap seconds flagged (top 2 runs) median 66; 'Slow first expansion' delay median 1.4s, share >3s 23%
+REST n1007: first-City wait (s) median 12 p75 28; all new-City waits median 19, share >60s 19%; idle-at-cap seconds flagged (top 2 runs) median 78; 'Slow first expansion' delay median 1.8s, share >3s 23%
+WIN n328: first-City wait (s) median 12 p75 35; all new-City waits median 21, share >60s 23%; idle-at-cap seconds flagged (top 2 runs) median 104; 'Slow first expansion' delay median 1.6s, share >3s 19%
+LOSE n789: first-City wait (s) median 12 p75 27; all new-City waits median 19, share >60s 20%; idle-at-cap seconds flagged (top 2 runs) median 66; 'Slow first expansion' delay median 1.8s, share >3s 25%
+
+-- FFA(6)
+TOP5 n30: first-City wait (s) median 4 p75 14; all new-City waits median 298, share >60s 60%; idle-at-cap seconds flagged (top 2 runs) median 388; 'Slow first expansion' delay median 1.4s, share >3s 10%
+REST n244: first-City wait (s) median 9 p75 21; all new-City waits median 15, share >60s 21%; idle-at-cap seconds flagged (top 2 runs) median 54; 'Slow first expansion' delay median 1.5s, share >3s 20%
+WIN n6: first-City wait (s) median 4 p75 7; all new-City waits median 1344, share >60s 76%; idle-at-cap seconds flagged (top 2 runs) median 532; 'Slow first expansion' delay median 0.9s, share >3s 0%
+LOSE n268: first-City wait (s) median 8 p75 20; all new-City waits median 23, share >60s 33%; idle-at-cap seconds flagged (top 2 runs) median 66; 'Slow first expansion' delay median 1.5s, share >3s 19%
+
+==== F. Opening build sequences (first 3 build orders) ====
+TEAM h10 TOP5 (n90): City > Port > City 13% | Port > City > Port 8% | City > Port > Factory 7% | City > Factory > City 7% | Port > City > Factory 7% | City > Port > Port 6%
+   first build: City 58%, Port 34%, Defense Post 6%, Factory 2%
+TEAM h10 REST (n756): Port > City > Factory 7% | City > Factory > City 7% | City > Port > Factory 6% | City > Factory > Port 4% | City > Port > City 4% | Port > City > Port 4%
+   first build: City 51%, Port 34%, Defense Post 6%, Factory 6%, (none) 2%, Missile Silo 0%
+FFA h10 TOP5 (n15): City > Factory > City 20% | City > City > Factory 13% | City > Port > City 7% | City > City > Defense Post 7% | City > Factory > Warship 7% | City > Defense Post > Port 7%
+   first build: City 80%, Port 20%
+FFA h10 REST (n130): City > Port > Factory 8% | City > Port > City 8% | City > Factory > City 6% | City > Port > Defense Post 5% | City > City > Factory 5% | City > Port 4%
+   first build: City 68%, Port 19%, Defense Post 7%, (none) 4%, Factory 2%
+
+==== G. Nukes: share of all nukes aimed at humans that hit the top-5 (by peak) / top-1, and rank at first hit ====
+TEAM(22): nukes at humans 3247; top-5 33% (they are 9% of humans); top-1 7%; nuked players' land rank at first hit: median 13
+   TOP5 (h10): first SAM minus first enemy silo: median 66s, share SAM within 2 min of enemy silo 49%, never built SAM 26%
+FFA(6): nukes at humans 618; top-5 74% (they are 10% of humans); top-1 15%; nuked players' land rank at first hit: median 6
+   TOP5 (h10): first SAM minus first enemy silo: median 232s, share SAM within 2 min of enemy silo 27%, never built SAM 7%
+
+==== H. Directional AUC of coach key metrics (TOP5 vs REST_ACTIVE; >0.5 = top players score better by the coach's own direction) ====
+
+-- TEAM h10
+share60: AUC top5 0.57 | AUC team-win 0.52
+share120: AUC top5 0.70 | AUC team-win 0.51
+share300: AUC top5 0.82 | AUC team-win 0.52
+peakShare: AUC top5 0.98 | AUC team-win 0.55
+goldPerMin: AUC top5 0.84 | AUC team-win 0.72
+firstCity: AUC top5 0.57 | AUC team-win 0.45
+float: AUC top5 0.55 | AUC team-win 0.64
+tradeShare: AUC top5 0.66 | AUC team-win 0.72
+placeGood: AUC top5 0.71 | AUC team-win 0.71
+placeBad: AUC top5 0.28 | AUC team-win 0.62
+lostEarly: AUC top5 0.43 | AUC team-win 0.76
+tradePerShip: AUC top5 0.45 | AUC team-win 0.49
+income10: AUC top5 0.68 | AUC team-win 0.65
+troopEff: AUC top5 0.67 | AUC team-win 0.45
+atCap: AUC top5 0.59 | AUC team-win 0.45
+overextended: AUC top5 0.53 | AUC team-win 0.57
+attackEff: AUC top5 0.64 | AUC team-win 0.57
+fullSends: AUC top5 0.43 | AUC team-win 0.49
+retreats: AUC top5 0.49 | AUC team-win 0.51
+conquests: AUC top5 0.86 | AUC team-win 0.55
+drawdown: AUC top5 0.73 | AUC team-win 0.82
+survival: AUC top5 0.73 | AUC team-win 0.70
+structuresLost: AUC top5 0.23 | AUC team-win 0.66
+alliances: AUC top5 0.62 | AUC team-win 0.40
+betrayedBy: AUC top5 0.46 | AUC team-win 0.52
+boatSuccess: AUC top5 0.42 | AUC team-win 0.39
+tradeGold: AUC top5 0.80 | AUC team-win 0.70
+nukeHitRate: AUC top5 0.56 | AUC team-win 0.45
+nukesTaken: AUC top5 0.37 | AUC team-win 0.64
+
+-- FFA h10
+share60: AUC top5 0.65 | AUC team-win 0.65
+share120: AUC top5 0.66 | AUC team-win 0.83
+share300: AUC top5 0.72 | AUC team-win 0.81
+peakShare: AUC top5 0.99 | AUC team-win 1.00
+goldPerMin: AUC top5 0.98 | AUC team-win 0.98
+firstCity: AUC top5 0.66 | AUC team-win 0.80
+float: AUC top5 0.40 | AUC team-win 0.36
+tradeShare: AUC top5 0.92 | AUC team-win 0.80
+placeGood: AUC top5 0.92 | AUC team-win 0.93
+placeBad: AUC top5 0.09 | AUC team-win 0.11
+lostEarly: AUC top5 0.37 | AUC team-win 0.56
+tradePerShip: AUC top5 0.63 | AUC team-win 0.86
+income10: AUC top5 0.83 | AUC team-win 0.81
+troopEff: AUC top5 0.39 | AUC team-win 0.34
+atCap: AUC top5 0.34 | AUC team-win 0.30
+overextended: AUC top5 0.59 | AUC team-win 0.59
+attackEff: AUC top5 0.65 | AUC team-win 0.71
+fullSends: AUC top5 0.45 | AUC team-win 0.23
+retreats: AUC top5 0.41 | AUC team-win 0.60
+conquests: AUC top5 0.84 | AUC team-win 0.93
+drawdown: AUC top5 0.85 | AUC team-win 0.98
+survival: AUC top5 0.96 | AUC team-win 0.95
+structuresLost: AUC top5 0.05 | AUC team-win 0.08
+alliances: AUC top5 0.91 | AUC team-win 0.75
+betrayedBy: AUC top5 0.20 | AUC team-win 0.21
+boatSuccess: AUC top5 0.31 | AUC team-win 0.43
+tradeGold: AUC top5 0.98 | AUC team-win 0.97
+nukeHitRate: AUC top5 0.57 | AUC team-win 0.71
+nukesTaken: AUC top5 0.05 | AUC team-win 0.06
+
+-- TEAM all
+share60: AUC top5 0.56 | AUC team-win 0.52
+share120: AUC top5 0.68 | AUC team-win 0.50
+share300: AUC top5 0.81 | AUC team-win 0.52
+peakShare: AUC top5 0.98 | AUC team-win 0.53
+goldPerMin: AUC top5 0.84 | AUC team-win 0.70
+firstCity: AUC top5 0.59 | AUC team-win 0.43
+float: AUC top5 0.56 | AUC team-win 0.63
+tradeShare: AUC top5 0.65 | AUC team-win 0.70
+placeGood: AUC top5 0.67 | AUC team-win 0.65
+placeBad: AUC top5 0.33 | AUC team-win 0.57
+lostEarly: AUC top5 0.43 | AUC team-win 0.68
+tradePerShip: AUC top5 0.45 | AUC team-win 0.49
+income10: AUC top5 0.69 | AUC team-win 0.63
+troopEff: AUC top5 0.66 | AUC team-win 0.43
+atCap: AUC top5 0.59 | AUC team-win 0.43
+overextended: AUC top5 0.52 | AUC team-win 0.56
+attackEff: AUC top5 0.65 | AUC team-win 0.59
+fullSends: AUC top5 0.42 | AUC team-win 0.49
+retreats: AUC top5 0.49 | AUC team-win 0.51
+conquests: AUC top5 0.86 | AUC team-win 0.53
+drawdown: AUC top5 0.74 | AUC team-win 0.81
+survival: AUC top5 0.74 | AUC team-win 0.69
+structuresLost: AUC top5 0.22 | AUC team-win 0.66
+alliances: AUC top5 0.61 | AUC team-win 0.38
+betrayedBy: AUC top5 0.47 | AUC team-win 0.53
+boatSuccess: AUC top5 0.43 | AUC team-win 0.39
+tradeGold: AUC top5 0.81 | AUC team-win 0.68
+nukeHitRate: AUC top5 0.57 | AUC team-win 0.46
+nukesTaken: AUC top5 0.33 | AUC team-win 0.64

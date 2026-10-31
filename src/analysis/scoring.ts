@@ -1,7 +1,8 @@
 import type { PlayerMetrics } from "./metrics.js";
 import { median } from "./metrics.js";
+import type { PlayMode } from "./mode.js";
 import { ReplayView } from "./replayView.js";
-import { clock, fmtNum, pct, TICKS_PER_SECOND } from "./rules.js";
+import { clock, fmtNum, GOOD_STACK_RATIO, pct, TICKS_PER_SECOND } from "./rules.js";
 import type { AttackLedgerRow, CategoryScore, Drill, KeyMoment, MetricLine } from "./types.js";
 
 /** Piecewise-linear map from a raw value to 0-100 through (x, score) points. */
@@ -36,6 +37,8 @@ interface MetricDef {
   absolute?: [number, number][];
   hint?: string;
   weight?: number;
+  /** Shown for context but not graded: these don't separate winners from the rest. */
+  info?: boolean;
 }
 
 function percentileOf(value: number, others: number[], higher: boolean): number {
@@ -59,7 +62,7 @@ function line(def: MetricDef, me: PlayerMetrics, all: PlayerMetrics[]): MetricLi
   const pctile = v !== null && others.length >= 3 ? percentileOf(v, others, def.higherIsBetter) : null;
   const abs = def.absolute ? curve(v, def.absolute) : null;
   let score: number | null = null;
-  if (v !== null) {
+  if (v !== null && !def.info) {
     if (pctile !== null && abs !== null) score = 0.55 * pctile + 0.45 * abs;
     else score = abs ?? pctile;
   }
@@ -83,7 +86,7 @@ const lcFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase(
 const share = (v: number) => pct(v, v < 0.01 ? 2 : 1);
 const secs = (v: number) => clock(v * TICKS_PER_SECOND);
 
-export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetrics[], ledger: AttackLedgerRow[]) {
+export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetrics[], ledger: AttackLedgerRow[], mode: PlayMode) {
   // Land share relative to the median tracked player (humans + nations),
   // so the scale works for 1-human single-player games and 50-player lobbies.
   const tracked = view.trackedPlayers();
@@ -111,6 +114,11 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
     return list.length >= 2 ? median(list.map((r) => r.tilesPer1kTroops as number)) : null;
   };
   const incomePerMin = (m: PlayerMetrics) => m.goldEarned / Math.max(1, m.lifeTicks / TICKS_PER_SECOND / 60);
+  const sinceSpawn = (t: number | null, m: PlayerMetrics) => (t === null ? (m.lifeTicks > 2400 ? 9999 : null) : (t - m.spawnPhaseEndTick) / TICKS_PER_SECOND);
+  const structuresLostShare = (m: PlayerMetrics) => {
+    const built = Object.values(m.structuresBuilt).reduce((a, b) => a + b, 0);
+    return built >= 3 ? Math.min(1, m.structuresLost / built) : null;
+  };
   const survival = (m: PlayerMetrics) => (m.alive ? 1 : m.lifeTicks / Math.max(1, view.data.meta.ticks - m.spawnPhaseEndTick));
 
   const defs: Partial<Record<CategoryScore["key"], { label: string; metrics: MetricDef[] }>> = {
@@ -118,34 +126,47 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
       label: "Expansion",
       metrics: [
         { key: "share60", label: "Land at 1:00 vs typical player", get: (m) => relShare(m, 60), fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: relCurve, hint: "Your land share 1 minute after spawn, divided by the median player's." },
-        { key: "share120", label: "Land at 2:00 vs typical player", get: (m) => relShare(m, 120), fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: relCurve, weight: 1.5 },
-        { key: "share300", label: "Land at 5:00 vs typical player", get: (m) => relShare(m, 300), fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: relCurve, weight: 1.5 },
-        { key: "peakShare", label: "Peak share of the map", get: (m) => m.peakLandShare, fmt: share, higherIsBetter: true, absolute: [[0.005, 20], [0.02, 45], [0.05, 65], [0.15, 85], [0.4, 100]], weight: 1.5 },
+        { key: "share120", label: "Land at 2:00 vs typical player", get: (m) => relShare(m, 120), fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: relCurve, weight: 1.25 },
+        { key: "share300", label: "Land at 5:00 vs typical player", get: (m) => relShare(m, 300), fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: relCurve, weight: 2, hint: "The strongest early predictor of where you finish." },
+        {
+          key: "peakShare",
+          label: "Peak share of the map",
+          get: (m) => m.peakLandShare,
+          fmt: share,
+          higherIsBetter: true,
+          absolute: [[0.005, 20], [0.02, 45], [0.05, 65], [0.15, 85], [0.4, 100]],
+          weight: 1.5,
+          // With 25+ humans a side, a winning team's members average ~3% each.
+          info: mode.bigTeams,
+        },
       ],
     },
     economy: {
       label: "Economy",
       metrics: [
-        { key: "goldPerMin", label: "Gold income per minute", get: incomePerMin, fmt: fmtNum, higherIsBetter: true, absolute: [[60_000, 35], [120_000, 60], [250_000, 80], [500_000, 100]], hint: "Base income is 60k/min; trade, trains and conquest add the rest.", weight: 1.5 },
-        { key: "firstCity", label: "First City after spawn", get: (m) => (m.firstCityTick === null ? (m.lifeTicks > 2400 ? 9999 : null) : (m.firstCityTick - m.spawnPhaseEndTick) / TICKS_PER_SECOND), fmt: (v) => (v >= 9999 ? "never" : secs(v)), higherIsBetter: false, absolute: [[90, 100], [150, 85], [240, 60], [360, 35], [9999, 5]] },
-        { key: "float", label: "Gold sitting unspent", get: (m) => m.floatMinutes, fmt: (v) => `${v.toFixed(1)} min of income`, higherIsBetter: false, absolute: [[1, 100], [2, 85], [4, 60], [8, 30], [15, 10]], hint: "Average gold held, in minutes of your own income. Like StarCraft's spending quotient: lower is better." },
+        { key: "income5to10", label: "Income per minute, 5:00–10:00", get: (m) => m.income5to10, fmt: fmtNum, higherIsBetter: true, absolute: [[100_000, 20], [500_000, 45], [1_500_000, 70], [3_000_000, 90], [5_000_000, 100]], hint: "Trade ships and trains pay most of everyone's gold from minute 5; this is where winners pull ahead.", weight: 1.5 },
+        { key: "goldPerMin", label: "Gold income per minute", get: incomePerMin, fmt: fmtNum, higherIsBetter: true, absolute: [[60_000, 30], [300_000, 55], [1_000_000, 75], [2_500_000, 90], [5_000_000, 100]], hint: "Base income is 60k/min; trade, trains and conquest add the rest." },
+        { key: "firstIncome", label: "First Port or Factory after spawn", get: (m) => sinceSpawn(m.firstIncomeTick, m), fmt: (v) => (v >= 9999 ? "never" : secs(v)), higherIsBetter: false, absolute: [[120, 100], [180, 85], [300, 55], [480, 25], [9999, 5]] },
+        { key: "firstCity", label: "First City after spawn", get: (m) => sinceSpawn(m.firstCityTick, m), fmt: (v) => (v >= 9999 ? "never" : secs(v)), higherIsBetter: false, info: true, hint: "Not graded: when the first City lands barely affects results. Build it when the troop cap holds you back." },
+        { key: "float", label: "Gold sitting unspent", get: (m) => m.floatMinutes, fmt: (v) => `${v.toFixed(1)} min of income`, higherIsBetter: false, absolute: [[1, 100], [2, 85], [4, 60], [8, 30], [15, 10]], hint: "Average gold held, in minutes of your own income. A bank for a SAM or a Hydrogen bomb once rivals have Silos is fine.", weight: 0.5 },
         { key: "tradeShare", label: "Gold from trade and trains", get: (m) => (m.goldEarned > 0 ? (m.goldBySource.trade + m.goldBySource.trainSelf + m.goldBySource.trainOther) / m.goldEarned : null), fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0, 30], [0.2, 60], [0.5, 85], [0.7, 100]], weight: 0.75 },
       ],
     },
     troops: {
       label: "Troop management",
       metrics: [
-        { key: "troopEff", label: "Troop growth efficiency", get: (m) => m.troopEfficiency, fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0.4, 25], [0.6, 50], [0.75, 72], [0.85, 88], [0.93, 100]], hint: "Average regen as a share of the maximum possible regen (troops at ~42% of cap).", weight: 2 },
-        { key: "atCap", label: "Time with troops at the cap", get: (m) => m.timeAtCapPct, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0, 100], [0.08, 80], [0.2, 55], [0.4, 25]], hint: "Troop growth stops at the cap." },
-        { key: "overextended", label: "Time nearly empty (<15% of cap)", get: (m) => m.timeOverextendedPct, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0, 100], [0.05, 80], [0.15, 50], [0.3, 20]] },
+        { key: "troopEff", label: "Troop growth efficiency (first 15 min)", get: (m) => m.troopEfficiency, fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0.4, 25], [0.6, 50], [0.75, 72], [0.85, 88], [0.93, 100]], hint: "Average regen as a share of the maximum possible regen (troops at ~42% of cap).", weight: 2 },
+        { key: "atCap", label: "Time with troops at the cap (first 15 min)", get: (m) => m.timeAtCapPct, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0, 100], [0.08, 80], [0.2, 55], [0.4, 25]], hint: "Troop growth stops at the cap." },
+        { key: "overextended", label: "Time nearly empty (<15% of cap, first 15 min)", get: (m) => m.timeOverextendedPct, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0, 100], [0.05, 80], [0.15, 50], [0.3, 20]] },
       ],
     },
     combat: {
       label: "Combat",
       metrics: [
+        { key: "stackRatio", label: "Attack stack vs the defender's home troops", get: (m) => m.stackRatio, fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: [[0.3, 15], [0.6, 40], [1, 65], [GOOD_STACK_RATIO, 88], [3, 100]], hint: `Median over your land attacks on players. Losses per tile double at 0.5× and are cheapest from about 1.67×.`, weight: 1.5 },
         { key: "attackEff", label: "Tiles taken per 1k troops (vs players)", get: attackEff, fmt: (v) => v.toFixed(1), higherIsBetter: true, absolute: [[1, 20], [3, 45], [8, 70], [20, 95]], weight: 1.5 },
-        { key: "fullSends", label: "Mid-game full sends at players", get: (m) => m.fullSends, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [1, 80], [3, 50], [6, 20]] },
-        { key: "retreats", label: "Retreats", get: (m) => m.retreats, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [1, 85], [3, 60], [6, 30]] },
+        { key: "fullSends", label: "Mid-game full sends at players", get: (m) => m.fullSends, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [1, 80], [3, 50], [6, 20]], weight: 0.5 },
+        { key: "retreats", label: "Retreats", get: (m) => m.retreats, fmt: (v) => String(v), higherIsBetter: false, info: true, hint: "Not graded: a retreat costs 25% of the surviving troops against a player, and is free against open land." },
         { key: "conquests", label: "Players eliminated", get: (m) => m.conquests, fmt: (v) => String(v), higherIsBetter: true, absolute: [[0, 40], [2, 65], [5, 85], [10, 100]] },
       ],
     },
@@ -154,7 +175,7 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
       metrics: [
         { key: "drawdown", label: "Worst territory collapse", get: (m) => m.maxDrawdown, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0.1, 100], [0.25, 80], [0.5, 50], [0.8, 20], [1, 5]], weight: 1.5 },
         { key: "survival", label: "Share of the game survived", get: survival, fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0.2, 10], [0.5, 40], [0.8, 70], [1, 100]], weight: 1.5 },
-        { key: "structuresLost", label: "Structures lost", get: (m) => m.structuresLost, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [2, 80], [6, 50], [15, 20]], weight: 0.5 },
+        { key: "structuresLost", label: "Structures lost, per structure built", get: structuresLostShare, fmt: (v) => pct(v), higherIsBetter: false, absolute: [[0, 100], [0.2, 80], [0.4, 55], [0.7, 25]], weight: 0.5 },
       ],
     },
     diplomacy: {
@@ -162,6 +183,14 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
       metrics: [
         { key: "alliances", label: "Alliances formed", get: (m) => m.alliancesFormed, fmt: (v) => String(v), higherIsBetter: true, absolute: [[0, 40], [1, 65], [3, 85], [6, 100]] },
         { key: "betrayedBy", label: "Times betrayed", get: (m) => m.alliancesBrokenByOthers, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [1, 70], [3, 40]], weight: 0.5 },
+      ],
+    },
+    teamwork: {
+      label: "Teamwork",
+      metrics: [
+        { key: "troopsDonated", label: "Troops given to teammates", get: (m) => (m.team === null ? null : m.donations.troopsSent), fmt: fmtNum, higherIsBetter: true, hint: "Feeding the teammate who is fighting beats attacking with a small stack." },
+        { key: "teamShare", label: "Your share of the team's land vs a fair share", get: (m) => m.teamShareMultiple, fmt: (v) => `${v.toFixed(2)}×`, higherIsBetter: true, absolute: [[0.25, 25], [0.5, 50], [1, 75], [2, 95]], hint: "From 5:00 on; 1× means you held 1/(team size) of your team's land." },
+        { key: "troopsReceived", label: "Troops received from teammates", get: (m) => (m.team === null ? null : m.donations.troopsReceived), fmt: fmtNum, higherIsBetter: true, info: true },
       ],
     },
     naval: {
@@ -174,16 +203,21 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
     nuclear: {
       label: "Nuclear",
       metrics: [
-        { key: "nukeHitRate", label: "Your nukes that landed", get: (m) => (m.nukesLaunched > 0 ? m.nukesLanded / m.nukesLaunched : null), fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0.2, 20], [0.5, 50], [0.8, 85], [1, 100]] },
-        { key: "nukesTaken", label: "Nukes launched at you", get: (m) => m.nukesReceived, fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [2, 70], [5, 40], [10, 15]] },
+        { key: "samDelay", label: "SAM cover after the first enemy Silo", get: (m) => m.samDelaySec, fmt: (v) => (v >= 9999 ? "never" : `${Math.round(v)}s`), higherIsBetter: false, absolute: [[60, 100], [90, 85], [180, 55], [300, 30], [9999, 10]], hint: mode.teammates ? "Your own SAM, or a teammate's SAM in range of your Cities." : "Seconds until a SAM of yours was up.", weight: 1.5 },
+        { key: "nukesNoSam", label: "Nukes at you while you had no SAM of your own", get: (m) => (m.enemySiloTick === null ? null : m.nukesWithoutOwnSam), fmt: (v) => String(v), higherIsBetter: false, absolute: [[0, 100], [2, 70], [5, 35], [10, 15]], hint: "Nukes aimed at land no SAM covered, before you had any SAM yourself." },
+        { key: "nukeHitRate", label: "Your nukes that landed", get: (m) => (m.nukesLaunched > 0 ? Math.min(1, m.nukesLanded / m.nukesLaunched) : null), fmt: (v) => pct(v), higherIsBetter: true, absolute: [[0.2, 20], [0.5, 50], [0.8, 85], [1, 100]] },
+        { key: "nukesTaken", label: "Nukes launched at you", get: (m) => m.nukesReceived, fmt: (v) => String(v), higherIsBetter: false, info: true, hint: "Not graded: nukes go to the leaders." },
       ],
     },
   };
 
   const relevant = (key: string) => {
     if (key === "naval") return all.some((m) => m.boatsSent > 0 || m.tradeGold > 0);
-    if (key === "nuclear") return me.nukesLaunched > 0 || me.nukesReceived > 0;
+    if (key === "nuclear") return me.nukesLaunched > 0 || me.nukesReceived > 0 || me.enemySiloTick !== null;
     if (key === "combat") return me.attacksVsPlayers > 0;
+    // Alliances between the sides of a 2- or 3-team game don't decide anything.
+    if (key === "diplomacy") return !mode.bigTeams;
+    if (key === "teamwork") return mode.teammates && mode.donations && me.lifeTicks > 300 * TICKS_PER_SECOND;
     return true;
   };
 
@@ -195,7 +229,11 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
     const scored = lines.filter((x) => x.l.score !== null);
     if (!scored.length) continue;
     const wsum = scored.reduce((a, x) => a + (x.d.weight ?? 1), 0);
-    const score = Math.round(scored.reduce((a, x) => a + (x.l.score as number) * (x.d.weight ?? 1), 0) / wsum);
+    // Teamwork: feeding the front and carrying it are both contributions, so take the better one.
+    const score =
+      key === "teamwork"
+        ? Math.max(...scored.map((x) => x.l.score as number))
+        : Math.round(scored.reduce((a, x) => a + (x.l.score as number) * (x.d.weight ?? 1), 0) / wsum);
     allLines.push(...lines.map((x) => x.l));
     const best = [...scored].sort((a, b) => (b.l.score as number) - (a.l.score as number))[0];
     const worst = [...scored].sort((a, b) => (a.l.score as number) - (b.l.score as number))[0];
@@ -205,7 +243,9 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
       score,
       grade: grade(score),
       summary:
-        score >= 75
+        key === "teamwork"
+          ? `${score >= 75 ? "Strong" : score >= 55 ? "Solid" : "Weak spot"}: you gave ${lines.find((x) => x.d.key === "troopsDonated")?.l.display ?? "—"} troops to teammates (median ${lines.find((x) => x.d.key === "troopsDonated")?.l.medianDisplay ?? "—"}) and held ${lines.find((x) => x.d.key === "teamShare")?.l.display ?? "—"} of a fair share of your team's land.`
+          : score >= 75
           ? `Strong: ${lcFirst(best.l.label)} was ${best.l.display}.`
           : score >= 55
             ? `Solid, with room to improve ${lcFirst(worst.l.label)} (${worst.l.display}).`
@@ -220,7 +260,7 @@ export function scoreGame(view: ReplayView, me: PlayerMetrics, all: PlayerMetric
   return { categories, overall: overallOf(categories), lines: allLines };
 }
 
-const WEIGHTS: Record<string, number> = { expansion: 1.3, economy: 1.1, buildings: 0.9, troops: 1.2, combat: 0.9, defense: 1.1, diplomacy: 0.4, naval: 0.5, nuclear: 0.5 };
+const WEIGHTS: Record<string, number> = { expansion: 1.3, economy: 1.1, buildings: 0.9, troops: 1.2, combat: 1.0, defense: 1.1, teamwork: 1.0, diplomacy: 0.4, naval: 0.5, nuclear: 0.6 };
 
 /** Weighted average of the category scores. */
 export function overallOf(categories: CategoryScore[]): number {
@@ -229,7 +269,7 @@ export function overallOf(categories: CategoryScore[]): number {
 }
 
 /** Turn scores and moments into strengths, weaknesses and drills. */
-export function coach(categories: CategoryScore[], moments: KeyMoment[], me: PlayerMetrics) {
+export function coach(categories: CategoryScore[], moments: KeyMoment[], me: PlayerMetrics, mode: PlayMode) {
   const lines = categories.flatMap((c) => c.metrics.map((m) => ({ c, m })));
   const scoreOf = (key: string) => categories.find((c) => c.metrics.some((m) => m.key === key));
   const strengths: string[] = [];
@@ -247,62 +287,67 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
   const add = (d: Drill) => {
     if (drills.length < 3 && !drills.some((x) => x.metricKey === d.metricKey)) drills.push(d);
   };
+  const lineOf = (k: string) => lines.find((x) => x.m.key === k)?.m;
   const ordered = [...categories].sort((a, b) => a.score - b.score);
   for (const c of ordered) {
-    if (c.key === "troops" && c.score < 75) {
+    // A fed carry sits at the cap by the team's choice; drill the players doing the feeding instead.
+    const fedCarry = mode.donations && me.donations.troopsReceived > me.donations.troopsSent;
+    if (c.key === "troops" && c.score < 75 && !fedCarry) {
       const atCap = val("atCap");
       add({
         title: "Keep the troop bar between 40% and 60%",
         why: `Your troops grew at ${pct(val("troopEff") ?? 0)} of the best possible rate${atCap !== null ? ` and sat at the cap ${pct(atCap)} of the time` : ""}. Regen peaks at about 42% of the cap and stops at 100%.`,
-        how: "Play a single-player game on Easy. Whenever the troop bar passes 70%, send an attack (bots or unclaimed land) at 30–40% until it drops back under 60%.",
+        how: mode.donations
+          ? "Whenever the bar passes about 60%, either attack with a stack bigger than the target's home troops or donate 30–40% of your troops to the teammate who is fighting."
+          : "Play a single-player game on Easy. Whenever the troop bar passes 70%, send an attack (bots or unclaimed land) at 20–30% until it drops back under 60%.",
         goal: "Troop growth efficiency above 80% in your next game.",
         metricKey: "troopEff",
         target: 0.8,
       });
     }
-    if (c.key === "expansion" && c.score < 70 && (val("share120") ?? 0) < 1.2) {
+    if (c.key === "expansion" && c.score < 70 && (val("share300") ?? val("share120") ?? 0) < 1) {
+      const key = val("share300") !== null ? "share300" : "share120";
       add({
-        title: "Faster opening",
-        why: `You reached ${lines.find((x) => x.m.key === "share120")?.m.display ?? "—"} of the typical player's land by 2:00.`,
-        how: "In the first 10 seconds after spawn, full-send into unclaimed land, then keep two expansion lanes busy at 60–70% until you touch neighbours. Hit bot tribes next: they take only 70% of normal losses and hand over their gold.",
-        goal: "At least 1.5× the typical player's land at 2:00.",
-        metricKey: "share120",
-        target: 1.5,
+        title: "Out-grow the lobby by 5:00",
+        why: `You held ${lineOf(key)?.display ?? "—"} of the typical player's land at ${key === "share300" ? "5:00" : "2:00"}. Land at 5:00 predicts where you finish better than anything else in the first minutes.`,
+        how: "Click about 20% into open land every time the bar refills, along two lanes; big sends don't expand faster and their troops stop regrowing. Then clear the bot tribes around you: you lose only 70% of the usual troops per bot tile, and finishing one hands you its gold. Keep at least a quarter of your cap at home.",
+        goal: "Land at 5:00 at or above the typical player's (1.0×).",
+        metricKey: key,
+        target: 1,
       });
     }
     if (c.key === "economy" && c.score < 70) {
-      // Drill whichever economy measure is actually weakest.
-      const weakest = [...c.metrics].filter((m) => m.value !== null).sort((x, y) => (x.percentile ?? 50) - (y.percentile ?? 50));
-      const fc = val("firstCity");
+      const fi = val("firstIncome");
+      const inc = lineOf("income5to10");
       const fl = val("float");
-      const lateCity = fc !== null && fc > 170;
-      const hoarding = fl !== null && fl > 2.5;
-      if (lateCity) {
+      if (fi !== null && fi > 240) {
         add({
-          title: "First City by 2:30",
-          why: `Your first City came at ${fc >= 9999 ? "never" : secs(fc)}. A level-1 City adds 250k to your troop cap, which more than doubles an early army.`,
-          how: "Build a City the moment you have 125k gold (about two minutes of income), somewhere in your interior, then keep upgrading Cities as gold comes in.",
-          goal: "First City within 2:30 of spawn.",
-          metricKey: "firstCity",
-          target: 150,
+          title: "A Port or Factory earning by 3:00",
+          why: `Your first Port or Factory came at ${fi >= 9999 ? "never" : secs(fi)}. After minute 5, trade ships and trains pay 90%+ of everyone's gold.`,
+          how: "Build a City first if your troops are at the cap, then a Port on coast with partners 300+ tiles away (both ends of every trade get paid), then a Factory where rail can reach several Cities or Ports, yours or a teammate's.",
+          goal: "First Port or Factory within 3:00 of spawn.",
+          metricKey: "firstIncome",
+          target: 180,
         });
-      } else if (hoarding) {
+      } else if (inc && inc.value !== null && inc.median != null && inc.value < inc.median && (val("share300") ?? 0) < 1.5) {
         add({
-          title: "Spend your gold",
-          why: `Your gold sat at ${lines.find((x) => x.m.key === "float")?.m.display ?? "—"} on average. Banked gold does nothing.`,
-          how: "Whenever you can afford the next City level, a Defense Post on a threatened border or (from minute 5) a SAM, buy it. Only bank when you are saving for a specific nuke.",
-          goal: "Average unspent gold under 2 minutes of income.",
+          title: "Grow income between minutes 5 and 10",
+          why: `You earned ${inc.display} a minute between 5:00 and 10:00; the median player earned ${inc.medianDisplay}.`,
+          how: `Keep adding Port levels (each level rolls for its own trade ships) and Factories that link to other players' stations: a train stop pays 10k at your own station and 25k at anyone else's, to both sides.${mode.bigTeams ? " Trade with teammates and turn on Stop Trading with Enemies." : ""}`,
+          goal: `Income from 5:00 to 10:00 at or above the lobby median (${inc.medianDisplay}/min).`,
+          metricKey: "income5to10",
+          target: inc.median,
+        });
+      } else if (fl !== null && fl > 3 && me.enemySiloTick === null) {
+        add({
+          title: "Put idle gold to work",
+          why: `Your gold sat at ${lineOf("float")?.display ?? "—"} on average with no enemy Silo to save against.`,
+          how: mode.donations
+            ? "Spend on Ports and Factories as the gold comes in, or give it to a front-line teammate who can turn it into Defense Posts and Cities. Bank only for a SAM or a bomb once rivals have Silos."
+            : "Spend on Ports and Factories as the gold comes in. Bank only for a SAM or a Hydrogen bomb once rivals have Silos.",
+          goal: "Average unspent gold under 2 minutes of income before the first enemy Silo.",
           metricKey: "float",
           target: 2,
-        });
-      } else if (weakest[0]?.key === "tradeShare" || weakest[0]?.key === "goldPerMin") {
-        add({
-          title: "Grow income beyond the base 60k a minute",
-          why: `Only ${lines.find((x) => x.m.key === "tradeShare")?.m.display ?? "—"} of your gold came from trade and trains; base income alone is 60k a minute.`,
-          how: "If your land touches the coast, build a Port: trade ships between ports 300+ tiles apart pay both owners, and short routes pay very little. Factories connect Cities by rail, and every train stop pays out. Taking land from bots and nations also hands you their gold.",
-          goal: "At least 20% of your gold from trade and trains.",
-          metricKey: "tradeShare",
-          target: 0.2,
         });
       }
     }
@@ -311,40 +356,58 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
       add({
         title: "Place every building where it earns and survives",
         why: `${bad} of your buildings were in poor spots or lost soon after you built them (see Economy & buildings for each one).`,
-        how: "Cities, Silos and Factories go deep inside your land, 40+ tiles from any enemy border. Ports go on the stretch of coast farthest from other players' ports (routes under 300 tiles pay little). Defense Posts go within 30 tiles of the border facing your strongest neighbour. SAMs go where they cover your Cities. Factories need 2+ of your Cities or Ports within 110 tiles.",
+        how: `Cities and Silos go deep inside your land, away from enemy borders${mode.teammates ? " (behind your front-line teammates)" : ""}. Ports go on coast whose partners are 300+ tiles away. Factories go where rail reaches several Cities or Ports, yours or anyone's. Defense Posts go where you are being attacked, on high ground if you can. SAMs go where they cover your Cities.`,
         goal: "No building lost within 2.5 minutes, and no badly placed buildings.",
         metricKey: "placeBad",
         target: 0,
       });
     }
     if (c.key === "combat" && c.score < 65) {
+      const sr = val("stackRatio");
       add({
-        title: "Pick fights you can win",
-        why: `You took ${lines.find((x) => x.m.key === "attackEff")?.m.display ?? "—"} tiles per 1k troops against players${(val("fullSends") ?? 0) > 0 ? ` and made ${val("fullSends")} mid-game full sends` : ""}.`,
-        how: "Before attacking a player, compare your stack to their whole army: below ~60% of it you pay up to double losses per tile. Prefer targets already fighting someone else, and use ~30% sends mid-game instead of full sends.",
-        goal: "No mid-game full sends, and better than 8 tiles per 1k troops against players.",
-        metricKey: "attackEff",
-        target: 8,
+        title: "Only attack with a bigger stack than they hold at home",
+        why: `Your median attack on a player was ${lineOf("stackRatio")?.display ?? "—"} the defender's home troops, and you took ${lineOf("attackEff")?.display ?? "—"} tiles per 1k troops. At half their home troops or less you pay double losses per tile.`,
+        how: mode.bigTeams
+          ? `Before attacking a player, compare your stack with the troops they hold at home. Below 1× it, donate the troops to the teammate fighting there instead; at ${GOOD_STACK_RATIO}× or more, attack. Hitting someone right after they send their army elsewhere is cheapest.`
+          : `Before attacking a player, compare your stack with the troops they hold at home. Below 1× it, wait and grow; at ${GOOD_STACK_RATIO}× or more, attack. Hitting someone right after they send their army elsewhere is cheapest.`,
+        goal: `Median attack stack at least 1× the defender's home troops (then aim for ${GOOD_STACK_RATIO}×).`,
+        metricKey: sr !== null ? "stackRatio" : "attackEff",
+        target: sr !== null ? 1 : 8,
+      });
+    }
+    if (c.key === "teamwork" && c.score < 60) {
+      add({
+        title: "Feed the front",
+        why: `You gave ${lineOf("troopsDonated")?.display ?? "0"} troops to teammates (median ${lineOf("troopsDonated")?.medianDisplay ?? "—"}) and held ${lineOf("teamShare")?.display ?? "—"} of a fair share of your team's land.`,
+        how: "Decide in the first two minutes whether you border the enemy team. If you don't, keep troops near 40–50% of your cap and donate 30–40% to the teammate who is fighting each time you pass half your cap; build Ports and Factories that link to teammates. If you do, ask for troops before you attack or collapse.",
+        goal: "Give at least the lobby median in troops to teammates, or hold at least your fair share (1×) of your team's land.",
+        metricKey: "troopsDonated",
+        target: lineOf("troopsDonated")?.median ?? undefined,
       });
     }
     if (c.key === "defense" && c.score < 65) {
       add({
         title: "Defend the border you'll be hit on",
-        why: `Your worst collapse lost ${lines.find((x) => x.m.key === "drawdown")?.m.display ?? "—"} of your territory.`,
-        how: "Identify your strongest neighbour by 3:00. Put a Defense Post on that border, keep 35–50% of your cap at home, and ally a second neighbour so you only have one front.",
+        why: `Your worst collapse lost ${lineOf("drawdown")?.display ?? "—"} of your territory.`,
+        how: mode.bigTeams
+          ? "Know which teammates border the enemy and where you'd be hit. Keep 35–50% of your cap at home on a live front, drop a Defense Post on high ground where the push lands, and ask a teammate for troops before the border breaks."
+          : "Identify your strongest neighbour by 3:00. Keep 35–50% of your cap at home, put a Defense Post on that border (on high ground if you can), and ally a second neighbour so you only have one front.",
         goal: "No collapse bigger than 25% of your peak territory.",
         metricKey: "drawdown",
         target: 0.25,
       });
     }
-    if (c.key === "nuclear" && c.score < 60) {
+    if (c.key === "nuclear" && c.score < 60 && val("samDelay") !== null) {
+      const d = val("samDelay")!;
       add({
-        title: "SAM cover before minute 6",
-        why: `${val("nukesTaken") ?? 0} nukes were launched at you.`,
-        how: "Once a rival owns a Missile Silo, put a SAM (1.5M) over your densest Cities; place a second so their ranges overlap.",
-        goal: "Zero nukes landing on your core.",
-        metricKey: "nukesTaken",
-        target: 0,
+        title: "SAM cover within a minute of the first enemy Silo",
+        why: `${d >= 9999 ? "None of your Cities was ever under a SAM" : `Your first City came under a SAM ${Math.round(d)}s after the first enemy Silo`}${me.nukesWithoutOwnSam ? `, and ${me.nukesWithoutOwnSam} nukes hit you while you had no SAM of your own` : ""}. A SAM takes 30s to build; a Hydrogen bomb arrives in about 10.`,
+        how: mode.teammates
+          ? "Watch for the first enemy Missile Silo. Within a minute, build a SAM (1.5M) over your densest Cities, or keep your Cities within 70 tiles of a teammate's SAM: it shoots down any enemy nuke in range."
+          : "Watch for the first Missile Silo near you. Within a minute, build a SAM (1.5M) over your densest Cities, and a second whose range overlaps it once you can afford it.",
+        goal: "A SAM over your Cities within 90 seconds of the first enemy Silo.",
+        metricKey: "samDelay",
+        target: 90,
       });
     }
   }
@@ -353,7 +416,7 @@ export function coach(categories: CategoryScore[], moments: KeyMoment[], me: Pla
     drills.push({
       title: worst ? `Fix this: ${worst.title}` : "Push for the win earlier",
       why: worst ? worst.detail : "Your fundamentals were strong across the board.",
-      how: worst?.suggestion ?? "Look for the moment the leader over-commits and hit their weakest border with a full stack.",
+      how: worst?.suggestion ?? "Look for the moment the leader sends their army elsewhere and hit the border they left, with a stack bigger than the troops they still hold at home.",
       goal: "Repeat this game's score with one fewer mistake.",
     });
   }

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, type Analysis, type GameSummary } from "../api";
+import { api, type Analysis, type GameSummary, type Severity } from "../api";
+import { AttackCards } from "../components/AttackCards";
 import { Markdown } from "../components/Markdown";
 import { EconomyTab } from "../components/EconomyTab";
+import { LessonPanel, xs } from "../components/Lesson";
 import { MapMoments } from "../components/MapMoments";
 import { SeverityCounts } from "../components/Moments";
 import { Scorecard } from "../components/Scorecard";
@@ -15,7 +17,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "moments", label: "Map & key moments" },
   { key: "buildings", label: "Economy & buildings" },
   { key: "scorecard", label: "Scorecard" },
-  { key: "attacks", label: "Attack ledger" },
+  { key: "attacks", label: "Attacks" },
   { key: "economy", label: "Troops & gold" },
   { key: "ask", label: "Ask the coach" },
 ];
@@ -25,6 +27,7 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("debrief");
   const [selected, setSelected] = useState<{ id: string | null; tick: number | null }>({ id: null, tick: null });
+  const [cardId, setCardId] = useState<string | null>(null);
 
   useEffect(() => {
     api.game(id).then(setData).catch((e) => setErr(e.message));
@@ -64,6 +67,10 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
   const select = (mid: string, tick: number) => {
     setSelected({ id: mid, tick });
     if (tab !== "moments") setTab("moments");
+  };
+  const openCard = (id: string) => {
+    setCardId(id);
+    setTab("attacks");
   };
   const durationMin = Math.round(a.game.durationTicks / 600);
 
@@ -154,7 +161,12 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
           ))}
         </div>
 
-        {tab === "debrief" && <DebriefTab a={a} onSelect={select} />}
+        {tab === "debrief" && (
+          <>
+            <LessonPanel analysis={a} onOpenCard={openCard} onOpenTroops={() => setTab("economy")} />
+            <DebriefTab a={a} onSelect={select} />
+          </>
+        )}
         {tab === "moments" &&
           (a.timeline ? (
             <MapMoments analysis={a} selectedId={selected.id} onSelect={(mid, tick) => setSelected({ id: mid, tick })} />
@@ -165,7 +177,7 @@ export function Game({ id, live }: { id: string; live: GameSummary | undefined }
           ))}
         {tab === "buildings" && <EconomyTab analysis={a} />}
         {tab === "scorecard" && <div className="panel"><Scorecard analysis={a} /></div>}
-        {tab === "attacks" && <AttackTab a={a} />}
+        {tab === "attacks" && <AttackTab a={a} cardId={cardId} onCard={setCardId} />}
         {tab === "economy" && (
           <div className="panel">
             <TroopChart analysis={a} selectedTick={selected.tick} />
@@ -271,54 +283,91 @@ function DebriefTab({ a, onSelect }: { a: Analysis; onSelect: (id: string, tick:
   );
 }
 
-function AttackTab({ a }: { a: Analysis }) {
+const SEV_RANK: Record<Severity, number> = { blunder: 5, mistake: 4, inaccuracy: 3, info: 2, good: 1, brilliant: 0 };
+const MERGED = "joined an attack already under way";
+
+/** Ledger rows with each burst of quick clicks on one target folded into a single row. */
+function foldBursts(rows: Analysis["attacks"]) {
+  const out: (Analysis["attacks"][number] & { clicks: number })[] = [];
+  for (const r of rows) {
+    const last = out[out.length - 1];
+    if (last && r.note === MERGED && r.target === last.target && r.tick - last.endTick <= 20 && r.tick >= last.tick) {
+      last.clicks++;
+      last.sent = Math.max(last.sent, r.sent);
+      last.ratio = Math.max(last.ratio ?? 0, r.ratio ?? 0);
+      last.troopsUsed += r.troopsUsed;
+      last.tilesGained += r.tilesGained;
+      last.endTick = Math.max(last.endTick, r.endTick, r.tick);
+      last.tilesPer1kTroops = last.troopsUsed > 0 ? (last.tilesGained / last.troopsUsed) * 1000 : null;
+      if (SEV_RANK[r.verdict] > SEV_RANK[last.verdict]) last.verdict = r.verdict;
+      continue;
+    }
+    out.push({ ...r, clicks: 1, endTick: Math.max(r.endTick, r.tick) });
+  }
+  return out;
+}
+
+function AttackTab({ a, cardId, onCard }: { a: Analysis; cardId: string | null; onCard: (id: string) => void }) {
   const [filter, setFilter] = useState<"players" | "all">("players");
-  const rows = a.attacks.filter((r) => filter === "all" || r.targetType === "Human" || r.targetType === "Nation");
+  const rows = foldBursts([...a.attacks].sort((x, y) => x.tick - y.tick)).filter((r) => filter === "all" || r.targetType === "Human" || r.targetType === "Nation");
   return (
-    <div className="panel" style={{ overflowX: "auto" }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
-        <p className="small muted" style={{ margin: 0 }}>
-          Every attack you launched. "Per 1k" is tiles taken for each 1,000 troops the attack used up; it is compared with every human attack in this lobby.
-        </p>
-        <select className="input" value={filter} onChange={(e) => setFilter(e.target.value as "players" | "all")} aria-label="Filter attacks">
-          <option value="players">Attacks on players</option>
-          <option value="all">All attacks</option>
-        </select>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Time</th>
-            <th>Target</th>
-            <th className="r">Sent</th>
-            <th className="r">Share of army</th>
-            <th className="r">Their army</th>
-            <th className="r">Used</th>
-            <th className="r">Tiles</th>
-            <th className="r">Per 1k</th>
-            <th>Note</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              <td>{r.verdict !== "info" && <span className={`glyph sev-${r.verdict}`} style={{ minWidth: 24, height: 18, fontSize: "0.75rem" }}>{GLYPH[r.verdict]}</span>}</td>
-              <td className="num">{clock(r.tick)}</td>
-              <td>{r.target}{r.naval && <span className="muted small"> by sea</span>}</td>
-              <td className="r">{fmtNum(r.sent)}</td>
-              <td className="r">{pct(r.ratio)}</td>
-              <td className="r muted">{r.targetType === "TerraNullius" ? "—" : fmtNum(r.targetTroopsAtStart)}</td>
-              <td className="r">{fmtNum(r.troopsUsed)}</td>
-              <td className="r">{fmtNum(r.tilesGained)}</td>
-              <td className="r">{r.tilesPer1kTroops === null ? "—" : r.tilesPer1kTroops.toFixed(1)}</td>
-              <td className="small muted">{r.note}</td>
+    <>
+      {a.troops && <AttackCards analysis={a} selectedId={cardId} onSelect={onCard} />}
+      <div className="panel" style={{ overflowX: "auto" }}>
+        <div className="row" style={{ justifyContent: "space-between", marginBottom: 10 }}>
+          <p className="small muted" style={{ margin: 0 }}>
+            Every attack you launched; quick follow-up clicks on the same target are folded into one row. "Stack" is what you sent ÷ the troops they held at home. "Per 1k" is tiles taken for each 1,000 troops used up.
+          </p>
+          <select className="input" value={filter} onChange={(e) => setFilter(e.target.value as "players" | "all")} aria-label="Filter attacks">
+            <option value="players">Attacks on players</option>
+            <option value="all">All attacks</option>
+          </select>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Time</th>
+              <th>Target</th>
+              <th className="r">Sent</th>
+              <th className="r">Share of army</th>
+              <th className="r">Their home army</th>
+              <th className="r">Stack</th>
+              <th className="r">Used</th>
+              <th className="r">Tiles</th>
+              <th className="r">Per 1k</th>
+              <th>Note</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {!rows.length && <p className="muted">No attacks in this view.</p>}
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const player = r.targetType === "Human" || r.targetType === "Nation";
+              const stack = player && r.targetTroopsAtStart > 0 ? r.sent / r.targetTroopsAtStart : null;
+              return (
+                <tr key={i}>
+                  <td>{r.verdict !== "info" && <span className={`glyph sev-${r.verdict}`} style={{ minWidth: 24, height: 18, fontSize: "0.75rem" }}>{GLYPH[r.verdict]}</span>}</td>
+                  <td className="num">{clock(r.tick)}</td>
+                  <td>
+                    {r.target}
+                    {r.naval && <span className="muted small"> by sea</span>}
+                    {r.clicks > 1 && <span className="chip" style={{ marginLeft: 8 }}>{r.clicks} clicks</span>}
+                  </td>
+                  <td className="r">{fmtNum(r.sent)}</td>
+                  <td className="r" style={{ color: (r.ratio ?? 0) > 0.6 && player ? "var(--mistake)" : undefined }}>{pct(r.ratio)}</td>
+                  <td className="r muted">{r.targetType === "TerraNullius" ? "—" : fmtNum(r.targetTroopsAtStart)}</td>
+                  <td className="r num" style={{ color: stack === null ? undefined : stack >= 1 ? "var(--good)" : stack >= 0.5 ? "var(--mistake)" : "var(--blunder)" }}>{stack === null ? "—" : xs(stack)}</td>
+                  <td className="r">{fmtNum(r.troopsUsed)}</td>
+                  <td className="r">{fmtNum(r.tilesGained)}</td>
+                  <td className="r">{r.tilesPer1kTroops === null ? "—" : r.tilesPer1kTroops.toFixed(1)}</td>
+                  <td className="small muted">{r.clicks > 1 && r.note === MERGED ? "" : r.note}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!rows.length && <p className="muted">No attacks in this view.</p>}
+      </div>
+    </>
   );
 }
 

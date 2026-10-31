@@ -1,6 +1,6 @@
-import type { Analysis, Severity } from "../../src/analysis/types";
+import type { Analysis, AttackCard, DrillSpot, Severity, TroopLesson, TroopRule } from "../../src/analysis/types";
 
-export type { Analysis, Severity };
+export type { Analysis, AttackCard, DrillSpot, Severity, TroopLesson, TroopRule };
 
 export interface GameSummary {
   game_id: string;
@@ -65,6 +65,23 @@ export interface TrendRow {
   metrics: Record<string, number | null>;
 }
 
+export interface PracticeItem {
+  gameId: string;
+  map: string;
+  mode: string;
+  startedAt: number;
+  drill: DrillSpot;
+  attempts: number;
+  correct: number;
+}
+
+export interface DrillVerdict {
+  severity: Severity;
+  title: string;
+  body: string;
+  correct: boolean;
+}
+
 // The server puts this install's API token in the page; writes must send it.
 const TOKEN = document.querySelector<HTMLMetaElement>('meta[name="coach-token"]')?.content ?? "";
 
@@ -96,6 +113,9 @@ export const api = {
   saveSettings: (s: Partial<Settings>) => req<Settings>("PUT", "/api/settings", s),
   trends: () => req<TrendRow[]>("GET", "/api/trends"),
   ask: (id: string, question: string) => req<{ answer: string }>("POST", `/api/games/${id}/ask`, { question }),
+  practice: () => req<PracticeItem[]>("GET", "/api/practice"),
+  answerDrill: (gameId: string, drillId: string, pct: number) =>
+    req<{ verdict: DrillVerdict; attempts: number; correct: number }>("POST", "/api/practice/answer", { gameId, drillId, pct }),
 };
 
 /** Live job updates from the server. */

@@ -27,6 +27,11 @@ export function baseTroopCap(tiles: number): number {
   return 2 * (Math.pow(Math.max(0, tiles), 0.6) * 1000 + 50_000);
 }
 
+/** Home-army floor with a neighbour in reach: 25% of the cap in the opening, 35% after. */
+export const OPENING_SECONDS = 180;
+export const OPENING_FLOOR = 0.25;
+export const HOME_FLOOR = 0.35;
+
 export const CITY_TROOP_CAP_BONUS = 250_000;
 export const GOLD_PER_SECOND_HUMAN = 1_000; // 100 gold per tick
 export const RETREAT_PENALTY = 0.25; // share of surviving troops lost when retreating from a player

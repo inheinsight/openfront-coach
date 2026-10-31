@@ -8,9 +8,10 @@ import { coach, grade, overallOf, scoreGame } from "./scoring.js";
 import { analyzeStatsOnly } from "./statsOnly.js";
 import { analyzeEconomy } from "./economy.js";
 import { playModeOf } from "./mode.js";
+import { analyzeTroops } from "./troops.js";
 import type { Analysis, BuildRow, KeyMoment, PlayerSummary } from "./types.js";
 
-export const ANALYSIS_VERSION = 2;
+export const ANALYSIS_VERSION = 3;
 
 export interface Identity {
   clientID?: string | null;
@@ -97,6 +98,9 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   const econ = analyzeEconomy(view, record, meRec, me, all, mode);
   econ.moments.forEach((m, i) => moments.push({ id: `e${i + 1}`, ...m }));
   moments.sort((a, b) => a.tick - b.tick);
+
+  // Troop habits: the lesson, attack cards and drills.
+  const troops = analyzeTroops(view, me, all, mode.teammates && me.team !== null);
 
   const { categories } = scoreGame(view, me, all, ledger, mode);
   if (econ.report.placements.length || econ.report.buildOrder.length) {
@@ -308,6 +312,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
   trendMetrics.placement = myPlacement;
   trendMetrics.won = result === "victory" ? 1 : 0;
   trendMetrics.placementScore = econ.report.score;
+  Object.assign(trendMetrics, troops.trend);
 
   const keyNumbers = keyNumbersFor(me, all, categories);
 
@@ -361,6 +366,7 @@ export function analyzeGame(record: GameRecord, replay: ReplayData | null, who: 
     leaderboard: leaderboard.slice(0, 12).concat(leaderboard.slice(12).filter((l) => l.isMe)),
     narrative: null,
     economy: econ.report,
+    troops: troops.report,
     ai: { jev: { used: false }, narrator: { used: false } },
     trendMetrics,
   };

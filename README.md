@@ -7,6 +7,13 @@ OpenFront's terms forbid real-time assistance, so the coach never reads or shows
 ## What you get
 
 - **Debrief.** A written review of your game: the story, three things to fix with timestamps, what to keep doing, and a plan for the next game. Your local Claude Code writes it, on your existing subscription.
+- **Troop lesson.** Four troop habits, each checked every game:
+  - stack at least the defender's home army;
+  - decide the total before a burst of clicks;
+  - keep a floor of troops at home;
+  - in team games, feed one front.
+
+  The debrief opens with the one habit to fix next, this game's evidence for it, the numbers for the lobby's median player and its top five, and how that habit has trended across your games.
 - **Front-line chart.** Your share of the map against your main rivals, with key moments pinned to the curve using chess annotation glyphs: `!!` brilliant, `!` good, `?!` inaccuracy, `?` mistake, `??` blunder.
 - **Key moments and map replay.** Each moment explains what happened, why it mattered and what to do instead. Selecting one jumps a territory-map replay to that point.
   - Detected moment types: openings that fell behind at 2:00 or 5:00, armies drained in the opening, attacks with stacks smaller than the defender's home army, panic counter-attacks into a bigger push, idle armies at the troop cap (in team games, while a teammate had room), territory collapses (with who did it and why), big pushes, idle gold, nukes that reached Cities with no SAM cover, betrayals, lost transports, leaving a team game early, and FFA overtime.
@@ -21,7 +28,13 @@ OpenFront's terms forbid real-time assistance, so the coach never reads or shows
   - Build timing: how long you sat on the gold before buying, and whether your army was at its cap when you bought a City.
   - Income by source over time compared with the lobby, and your build order next to the strongest player's.
   - Warship patrols, warship losses, and who captured your trade ships.
-- **Attack ledger and build order.** Every attack: troops sent, share of your army, the defender's army, troops used, tiles taken, efficiency.
+- **Attacks.**
+  - Decision cards for the attacks on players that cost you most. Each shows:
+    - your stack against the defender's home army, on the engine's loss bands;
+    - what you did, click by click;
+    - what would have worked, such as the moment their home army dropped while they fought someone else.
+  - A ledger of every attack, with bursts of quick clicks folded into one row.
+- **Practice.** "Your call" drills built from your own attacks and defences. You choose how much to send before you see what you did and the coach's call. Missed drills come back until you get them right twice.
 - **Progress.** Trends across games for the numbers that matter, with goals from your drills.
 - **Ask the coach.** Ask follow-up questions about a game, for example "why did I collapse at 7:58?".
 - **Jev judge (optional).** [TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev) reviews each key moment. It returns a calibrated severity, the probability the moment was avoidable, and which lesson it teaches, for about a tenth of a cent per game.
@@ -111,6 +124,7 @@ Useful scripts:
 
 - `npx tsx scripts/try-replay.ts <gameId>`: replay a game and print the harness output.
 - `npx tsx scripts/try-analyze.ts <gameId> <username>`: print the full analysis for one player.
+- `npx tsx scripts/reanalyze.ts [gameId ...]`: re-run the analysis for your games from their cached replays, keeping each written debrief. Use it after the analysis changes; with no IDs it covers every game.
 - `npx tsx scripts/try-ai.ts <gameId> <username>`: run analysis, then Jev and the narrator.
 - `npx tsx scripts/rule-audit.ts [--team | --ffa]`: re-run every coaching rule for every human in your cached games and show which rules fire on each lobby's top five as often as on everyone else.
 - `node scripts/extension-sim.mjs <game url> <username> [publicId]`: run the real extension code against the coach.

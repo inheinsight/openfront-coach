@@ -29,11 +29,11 @@ const LESSONS = {
   expansion_speed: "Expand faster or earlier into unclaimed land and weak bots.",
   troop_reserve: "Keep a troop reserve at home (about 35-60% of the cap) instead of emptying the army or idling at the cap.",
   target_selection: "Choose better attack targets: weaker, distracted or isolated enemies rather than strong, focused ones.",
-  attack_sizing: "Size attacks correctly: big enough stacks relative to the defender's army, no mid-game full sends.",
+  attack_sizing: "Size attacks correctly: stacks bigger than the troops the defender holds at home, no mid-game full sends.",
   two_front: "Avoid fighting on two fronts at once.",
-  economy_spending: "Spend gold promptly on Cities, Ports and Factories instead of banking it.",
+  economy_spending: "Get Ports and Factories earning early and keep gold working; bank only for a SAM or a bomb once rivals have Silos.",
   defense_structures: "Use Defense Posts and defensive positioning on threatened borders.",
-  nuke_defense: "Build SAM launchers before rivals start launching nukes.",
+  nuke_defense: "Get SAM cover over your Cities within a minute of the first enemy Missile Silo.",
   diplomacy: "Use alliances and betrayals more carefully.",
   naval_safety: "Protect transport boats and naval landings.",
   keep_doing: "Nothing to fix: this was good play to repeat.",
@@ -69,15 +69,19 @@ export function jevAvailable() {
 
 function gameContext(a: Analysis) {
   return {
-    game: `${a.game.mode} ${a.game.type} game on the ${a.game.map} map with ${a.game.humans} human players, ${a.game.nations} AI nations and ${a.game.bots} bot tribes; difficulty ${a.game.difficulty}.`,
+    game:
+      `${a.game.mode}${a.game.teams ? ` (${a.game.teams} teams)` : ""} ${a.game.type} game on the ${a.game.map} map with ${a.game.humans} human players, ${a.game.nations} AI nations and ${a.game.bots} bot tribes; difficulty ${a.game.difficulty}.` +
+      (a.game.teams ? " The team with the most land wins, and teammates can donate troops and gold, so judge the player's contribution to the team rather than their personal land." : ""),
     player: a.me.name,
     finalResult: `${a.me.result}${a.me.placement ? `, placed ${a.me.placement} of ${a.me.placementOf}` : ""}; peaked at ${(a.me.peakLandShare * 100).toFixed(1)}% of the map.`,
     rulesOfThumb: [
       "Troop growth is fastest when troops sit around 40% of the troop cap and stops at the cap.",
-      "Attacking with a stack smaller than about 60% of the defender's whole army costs up to double losses per tile.",
+      "Attack losses per tile double when your stack is half the defender's home troops or less, and are cheapest from about 1.67× their home troops.",
+      "Big sends into unclaimed land don't expand faster past about 6,600 troops, and troops away on an attack don't regrow.",
       "Retreating from a player forfeits 25% of the surviving troops.",
       "Breaking an alliance makes you a traitor for 30 seconds: attackers lose half as many troops against you.",
-      "Cities raise the troop cap by 250k per level; gold that sits unspent does nothing.",
+      "Cities raise the troop cap by 250k per level but earn no gold; trade ships and trains pay most of everyone's gold after minute 5.",
+      "Leaders get nuked whatever they do; what matters is SAM cover soon after the first enemy Missile Silo.",
     ],
   };
 }
@@ -181,11 +185,12 @@ export async function judgeWithJev(analysis: Analysis): Promise<JevSummary> {
     if (focus.confidence >= 0.5) {
       const keyToMetric: Record<string, string[]> = {
         troops: ["troopEff"],
-        expansion: ["share120"],
-        economy: ["firstCity", "float"],
-        combat: ["attackEff"],
+        expansion: ["share300", "share120"],
+        economy: ["firstIncome", "income5to10", "float"],
+        combat: ["stackRatio", "attackEff"],
         defense: ["drawdown"],
-        nuclear: ["nukesTaken"],
+        teamwork: ["troopsDonated"],
+        nuclear: ["samDelay"],
       };
       const keys = keyToMetric[focus.area] ?? [];
       analysis.drills.sort((x, y) => Number(keys.includes(y.metricKey ?? "")) - Number(keys.includes(x.metricKey ?? "")));

@@ -25,6 +25,23 @@ export function baseTroopCap(tiles: number): number {
   return 2 * (Math.pow(Math.max(0, tiles), 0.6) * 1000 + 50_000);
 }
 
+/**
+ * Attack losses per tile scale with clamp(defender home troops ÷ your stack,
+ * 0.6, 2) (v0.35 EngineConfig). "Home" means troops not out in attacks.
+ */
+export const LOSS_MULT_MIN = 0.6;
+export const LOSS_MULT_MAX = 2;
+export function attackLossMultiplier(stack: number): number {
+  return Math.min(LOSS_MULT_MAX, Math.max(LOSS_MULT_MIN, 1 / Math.max(stack, 1e-6)));
+}
+/** The stack (÷ their home troops) where losses bottom out: 1 / 0.6 ≈ 1.67. */
+export const CHEAPEST_STACK = 1 / LOSS_MULT_MIN;
+
+/** Home-army floor with a neighbour in reach: 25% of the cap in the opening, 35% after. */
+export const OPENING_SECONDS = 180;
+export const OPENING_FLOOR = 0.25;
+export const HOME_FLOOR = 0.35;
+
 export const CITY_TROOP_CAP_BONUS = 250_000;
 export const GOLD_PER_SECOND_HUMAN = 1_000; // 100 gold per tick
 export const RETREAT_PENALTY = 0.25; // share of surviving troops lost when retreating from a player

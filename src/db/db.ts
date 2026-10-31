@@ -80,6 +80,14 @@ export function getDb(): Database.Database {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS games_status ON games(status, next_check_at);
+    CREATE TABLE IF NOT EXISTS drill_answers (
+      game_id TEXT NOT NULL,
+      drill_id TEXT NOT NULL,
+      pct INTEGER NOT NULL,
+      correct INTEGER NOT NULL,
+      answered_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS drill_answers_drill ON drill_answers(game_id, drill_id);
   `);
   return db;
 }
@@ -210,4 +218,19 @@ export function trends() {
 
 export function deleteGame(gameId: string) {
   getDb().prepare("DELETE FROM games WHERE game_id = ?").run(gameId);
+  getDb().prepare("DELETE FROM drill_answers WHERE game_id = ?").run(gameId);
+}
+
+// ---- drills --------------------------------------------------------------
+
+export function recordDrillAnswer(gameId: string, drillId: string, pct: number, correct: boolean) {
+  getDb().prepare("INSERT INTO drill_answers(game_id, drill_id, pct, correct, answered_at) VALUES (?, ?, ?, ?, ?)").run(gameId, drillId, pct, correct ? 1 : 0, Date.now());
+}
+
+/** Attempts and correct answers per drill, keyed "gameId/drillId". */
+export function drillProgress(): Map<string, { attempts: number; correct: number }> {
+  const rows = getDb()
+    .prepare("SELECT game_id, drill_id, COUNT(*) AS attempts, SUM(correct) AS correct FROM drill_answers GROUP BY game_id, drill_id")
+    .all() as { game_id: string; drill_id: string; attempts: number; correct: number }[];
+  return new Map(rows.map((r) => [`${r.game_id}/${r.drill_id}`, { attempts: r.attempts, correct: r.correct }]));
 }

@@ -14,6 +14,7 @@ interface MetricSpec {
 }
 
 const METRICS: MetricSpec[] = [
+  { key: "stackMedian", label: "Stack ÷ their home army", fmt: (v) => `${v.toFixed(2)}×`, target: 1, higherIsBetter: true, why: "Below 1× you pay more troops per tile than they do; at 0.5× or less, double." },
   { key: "troopEff", label: "Troop growth efficiency", fmt: (v) => pct(v), target: 0.8, higherIsBetter: true, why: "Regen peaks with troops around 42% of the cap." },
   { key: "share120", label: "Land at 2:00 vs typical player", fmt: (v) => `${v.toFixed(2)}×`, target: 1.5, higherIsBetter: true, why: "Fast openings snowball." },
   { key: "firstCity", label: "First City after spawn", fmt: (v) => (v >= 9999 ? "never" : clock(v * 10)), target: 150, higherIsBetter: false, why: "Each City level adds 250k troop cap." },

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { api, onGameEvents, type GameSummary, type Health } from "./api";
 import { Game } from "./pages/Game";
 import { Home } from "./pages/Home";
+import { Practice } from "./pages/Practice";
 import { Settings } from "./pages/Settings";
 import { Trends } from "./pages/Trends";
 import { Link, usePath } from "./router";
@@ -43,6 +44,7 @@ function App() {
   const gameMatch = path.match(/^\/game\/([A-Za-z0-9_-]+)/);
   const nav = [
     { to: "/", label: "Games", active: path === "/" || !!gameMatch },
+    { to: "/practice", label: "Practice", active: path === "/practice" },
     { to: "/progress", label: "Progress", active: path === "/progress" },
     { to: "/settings", label: "Settings", active: path === "/settings" },
   ];
@@ -72,6 +74,8 @@ function App() {
       </header>
       {gameMatch ? (
         <Game id={gameMatch[1]} live={games.find((g) => g.game_id === gameMatch[1])} />
+      ) : path === "/practice" ? (
+        <Practice />
       ) : path === "/progress" ? (
         <Trends />
       ) : path === "/settings" ? (

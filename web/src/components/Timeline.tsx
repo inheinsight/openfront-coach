@@ -121,8 +121,10 @@ export function FrontLine({ analysis, selectedTick, onSelectMoment }: Props) {
 }
 
 /** Troops as a share of the cap, with the regen sweet spot shaded. */
-export function TroopChart({ analysis, selectedTick }: { analysis: Analysis; selectedTick: number | null }) {
+export function TroopChart({ analysis, selectedTick, floorUntil = null }: { analysis: Analysis; selectedTick: number | null; floorUntil?: number | null }) {
   const tl = analysis.timeline!;
+  const t0 = tl.ticks[0] ?? 0;
+  const t1 = tl.ticks[tl.ticks.length - 1] ?? 0;
   const data = tl.ticks.map((t, i) => ({
     t,
     ratio: tl.me.maxTroops[i] > 0 ? tl.me.troops[i] / tl.me.maxTroops[i] : 0,
@@ -142,6 +144,12 @@ export function TroopChart({ analysis, selectedTick }: { analysis: Analysis; sel
           <YAxis domain={[0, 1]} tickFormatter={(v) => pct(v)} stroke="#4b6280" tick={{ fill: "#7f95ae", fontSize: 12 }} width={46} />
           <ReferenceArea y1={0.35} y2={0.6} fill="#7bc47f" fillOpacity={0.12} />
           <ReferenceLine y={0.42} stroke="#7bc47f" strokeOpacity={0.5} strokeDasharray="3 3" />
+          {floorUntil !== null && (
+            <>
+              <ReferenceLine segment={[{ x: t0, y: 0.25 }, { x: Math.min(floorUntil, t1), y: 0.25 }]} stroke="#f27d75" strokeDasharray="6 4" />
+              {floorUntil < t1 && <ReferenceLine segment={[{ x: floorUntil, y: 0.35 }, { x: t1, y: 0.35 }]} stroke="#f27d75" strokeDasharray="6 4" label={{ value: "floor", position: "insideBottomRight", fill: "#f27d75", fontSize: 11 }} />}
+            </>
+          )}
           {selectedTick !== null && <ReferenceLine x={selectedTick} stroke="#e9e2cf" strokeOpacity={0.6} />}
           <Tooltip
             content={({ active, payload, label }) =>

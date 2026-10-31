@@ -97,6 +97,91 @@ export interface Drill {
   target?: number;
 }
 
+/** One of the four troop habits the coach teaches, judged for this game. */
+export interface TroopRule {
+  key: "stack" | "floor" | "clicks" | "feed";
+  label: string;
+  status: "met" | "close" | "missed" | "unscored";
+  summary: string;
+  passed: number | null;
+  total: number | null;
+}
+
+/** The one troop habit to work on next game, with this game's evidence. */
+export interface TroopLesson {
+  rule: TroopRule["key"];
+  title: string;
+  why: string;
+  stat: string;
+  statLabel: string;
+  benchmarks: { label: string; display: string; you?: boolean }[];
+  nextGoal: string;
+  how: string;
+  /** trendMetrics key to chart across games, and the line to beat. */
+  trend: { key: string; label: string; target: number | null; format: "x" | "pct" | "count" };
+  /** The attack card that shows this game's clearest example. */
+  exampleCardId: string | null;
+}
+
+/** One decision to attack a player: a single click or a burst of quick clicks. */
+export interface AttackCard {
+  id: string;
+  tick: number;
+  lastTick: number;
+  target: string;
+  targetId: number;
+  severity: Severity;
+  clicks: number;
+  /** Share of your home army sent after each click. */
+  clickShares: number[];
+  sent: number;
+  share: number;
+  homeBefore: number;
+  cap: number;
+  /** Troops the target held at home (not in attacks) at your first click. */
+  targetHome: number;
+  /** sent ÷ targetHome. */
+  stack: number;
+  /** The engine's loss multiplier per tile at this stack. */
+  loss: number;
+  troopsUsed: number;
+  tilesGained: number;
+  homeAfter: number | null;
+  /** Their home army (and yours) from 20 s before to 60 s after. */
+  series: { tick: number; theirs: number | null; yours: number | null }[];
+  /** When holding your army would have given a far better stack. */
+  window: { tick: number; theirHome: number; stack: number } | null;
+  /** Set when this was an answer to their attack on you. */
+  counter: { tick: number; incoming: number } | null;
+  teammates: string[];
+  did: string[];
+  call: string;
+  featured: boolean;
+}
+
+/** A decision from your own game, replayed as a question. */
+export interface DrillSpot {
+  id: string;
+  kind: "attack" | "defend";
+  rule: "stack" | "floor";
+  tick: number;
+  question: string;
+  target: string;
+  targetId: number;
+  facts: { yourHome: number; cap: number; theirHome: number; incoming: number | null; yourTiles: number; theirTiles: number };
+  /** Troops to keep at home (defend drills). */
+  floor: number | null;
+  youDid: { share: number; clicks: number; text: string };
+  call: string;
+}
+
+export interface TroopReport {
+  rules: TroopRule[];
+  lesson: TroopLesson | null;
+  cards: AttackCard[];
+  drills: DrillSpot[];
+}
+
 export interface PlayerSummary {
   smallID: number;
   clientID: string | null;
@@ -168,6 +253,8 @@ export interface Analysis {
   narrative: { text: string; provider: string; model: string } | null;
   /** Economy, building placement and warship review (replay analyses only). */
   economy?: import("./economy.js").EconomyReport;
+  /** Troop habits: this game's lesson, attack cards and drills (replay analyses only). */
+  troops?: TroopReport;
   ai: {
     jev: {
       used: boolean;

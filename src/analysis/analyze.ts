@@ -11,7 +11,7 @@ import { playModeOf } from "./mode.js";
 import { analyzeTroops } from "./troops.js";
 import type { Analysis, BuildRow, KeyMoment, PlayerSummary } from "./types.js";
 
-export const ANALYSIS_VERSION = 3;
+export const ANALYSIS_VERSION = 4;
 
 export interface Identity {
   clientID?: string | null;

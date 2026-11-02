@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActionContext, ReplayData } from "../src/engine/replayTypes";
 import { ReplayView } from "../src/analysis/replayView";
-import { gradeDrill, sendsOf } from "../src/analysis/troops";
+import { attackRange, gradeDrill, sendsOf } from "../src/analysis/troops";
 import type { DrillSpot } from "../src/analysis/types";
 
 function view(actions: Partial<ActionContext>[]): ReplayView {
@@ -44,6 +44,18 @@ describe("sends", () => {
   });
 });
 
+describe("attack range", () => {
+  it("runs from their home army up to what sits above your floor", () => {
+    expect(attackRange(100_000, 35_000, 50_000)).toEqual({ lo: 50, hi: 65, aim: 65 });
+    expect(attackRange(100_000, 25_000, 40_000)).toEqual({ lo: 40, hi: 75, aim: 68 });
+  });
+
+  it("says hold when matching them would break your floor", () => {
+    // Scandinavia 3:53: your whole army beat theirs, but not with the floor kept.
+    expect(attackRange(762_979, 364_736, 746_225)).toEqual({ lo: 0, hi: 0, aim: 0 });
+  });
+});
+
 describe("drill grading", () => {
   const facts = { yourHome: 100_000, cap: 400_000, theirHome: 200_000, incoming: null, yourTiles: 1, theirTiles: 1 };
   const attack: DrillSpot = { id: "attack-1", kind: "attack", rule: "stack", tick: 1, question: "", target: "Foe", targetId: 2, facts, floor: null, youDid: { share: 1, clicks: 1, text: "" }, call: "" };
@@ -54,16 +66,33 @@ describe("drill grading", () => {
     expect(gradeDrill(attack, 100).severity).toBe("blunder");
   });
 
-  it("rewards a send once it matches their home army", () => {
-    const strong: DrillSpot = { ...attack, facts: { ...facts, theirHome: 50_000 } };
+  it("rewards holding when only an empty home beats their home army", () => {
+    const close: DrillSpot = { ...attack, facts: { ...facts, yourHome: 762_979, cap: 1_042_104, theirHome: 746_225 }, floor: 364_736 };
+    expect(gradeDrill(close, 0)).toMatchObject({ correct: true, severity: "good", range: { lo: 0, hi: 0 } });
+    expect(gradeDrill(close, 100)).toMatchObject({ correct: false, title: "Below your floor" });
+  });
+
+  it("rewards a send that matches their home army and keeps the floor", () => {
+    const strong: DrillSpot = { ...attack, facts: { ...facts, cap: 100_000, theirHome: 50_000 }, floor: 35_000 };
     expect(gradeDrill(strong, 20).correct).toBe(false);
     expect(gradeDrill(strong, 60).correct).toBe(true);
+    expect(gradeDrill(strong, 65).correct).toBe(true);
     expect(gradeDrill(strong, 0).severity).toBe("inaccuracy");
+    expect(gradeDrill(strong, 100)).toMatchObject({ correct: false, severity: "mistake", title: "Below your floor" });
   });
 
   it("wants a small counter, or none, when you are attacked", () => {
     expect(gradeDrill(defend, 10).correct).toBe(true);
     expect(gradeDrill(defend, 30).severity).toBe("inaccuracy");
     expect(gradeDrill(defend, 90).severity).toBe("blunder");
+    const big: DrillSpot = { ...defend, floor: 20_000 };
+    expect(gradeDrill(big, 40)).toMatchObject({ correct: false, title: "Bigger than it needs to be" });
+  });
+
+  it("only ever marks right what the range allows", () => {
+    for (const d of [attack, defend, { ...attack, facts: { ...facts, theirHome: 30_000 }, floor: 10_000 }]) {
+      const { lo, hi } = gradeDrill(d, 0).range;
+      for (let p = 0; p <= 100; p++) expect(gradeDrill(d, p).correct).toBe(p >= lo && p <= hi);
+    }
   });
 });

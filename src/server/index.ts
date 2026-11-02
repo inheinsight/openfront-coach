@@ -2,8 +2,9 @@ import express, { type NextFunction, type Request, type Response } from "express
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
-import { deleteGame, drillProgress, getGame, getSettings, learnIdentity, listGames, loadAnalysis, recordDrillAnswer, trends, updateSettings, type Identity } from "../db/db.js";
+import { deleteGame, drillAnswers, getGame, getSettings, learnIdentity, listGames, loadAnalysis, recordDrillAnswer, trends, updateSettings, type Identity } from "../db/db.js";
 import { gradeDrill } from "../analysis/troops.js";
+import type { DrillSpot } from "../analysis/types.js";
 import { bus, enqueue, startWorker, syncFromPublicId } from "../jobs/pipeline.js";
 import { loadAnyReplay } from "../engine/replay.js";
 import { importRecordFile } from "../openfront/api.js";
@@ -202,15 +203,18 @@ app.post("/api/games/:id/ask", (req, res) => {
     .catch((e) => res.status(502).json({ error: String(e?.message ?? e) }));
 });
 
+/** Attempts and right answers for a drill, graded with today's rules. */
+const progressOf = (drill: DrillSpot, pcts: number[]) => ({ attempts: pcts.length, correct: pcts.filter((p) => gradeDrill(drill, p).correct).length });
+
 /** Drills from your own games: decisions to answer before seeing what you did. */
 app.get("/api/practice", (_req, res) => {
-  const progress = drillProgress();
+  const answers = drillAnswers();
   const out = [];
   for (const g of listGames(1000)) {
     if (g.status !== "done") continue;
     const a = loadAnalysis(g.game_id);
     for (const drill of a?.troops?.drills ?? []) {
-      const p = progress.get(`${g.game_id}/${drill.id}`) ?? { attempts: 0, correct: 0 };
+      const p = progressOf(drill, answers.get(`${g.game_id}/${drill.id}`) ?? []);
       out.push({ gameId: g.game_id, map: a!.game.map, mode: a!.game.mode, startedAt: a!.game.startedAt, drill, ...p });
     }
   }
@@ -226,7 +230,7 @@ app.post("/api/practice/answer", (req, res) => {
   if (!drill) return void res.status(404).json({ error: "unknown drill" });
   const verdict = gradeDrill(drill, pct);
   recordDrillAnswer(gameId, drill.id, pct, verdict.correct);
-  res.json({ verdict, ...(drillProgress().get(`${gameId}/${drill.id}`) ?? { attempts: 1, correct: verdict.correct ? 1 : 0 }) });
+  res.json({ verdict, ...progressOf(drill, drillAnswers().get(`${gameId}/${drill.id}`) ?? [pct]) });
 });
 
 app.get("/api/trends", (_req, res) => {

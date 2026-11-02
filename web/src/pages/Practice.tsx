@@ -95,6 +95,8 @@ function Drill({ item, onAnswered, onNext }: { item: PracticeItem; onAnswered: (
   const [err, setErr] = useState<string | null>(null);
   const sent = Math.round((f.yourHome * pctSent) / 100);
   const left = f.yourHome - sent;
+  // The most you can send and still keep your floor at home.
+  const most = d.floor === null ? null : Math.max(0, f.yourHome - d.floor);
 
   const lockIn = async () => {
     setBusy(true);
@@ -113,6 +115,11 @@ function Drill({ item, onAnswered, onNext }: { item: PracticeItem; onAnswered: (
   // Attack drills measure what you send against their home army; defence drills what you keep.
   const scale = Math.max(f.yourHome, d.kind === "attack" ? f.theirHome : Math.max(f.incoming ?? 0, d.floor ?? 0)) * 1.1;
   const at = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
+  // After lock-in, shade the right answer: troops sent on attack drills, troops kept on defence drills.
+  const range = result?.range ?? null;
+  const troopsAt = (p: number) => (f.yourHome * p) / 100;
+  const shade = range && (d.kind === "attack" ? [troopsAt(range.lo), troopsAt(range.hi)] : [f.yourHome - troopsAt(range.hi), f.yourHome - troopsAt(range.lo)]);
+  const answer = range && (range.hi === 0 ? "hold, send 0%" : range.lo === range.hi ? `${range.lo}%` : `${range.lo}–${range.hi}%`);
 
   return (
     <div className="drill-grid">
@@ -151,12 +158,16 @@ function Drill({ item, onAnswered, onNext }: { item: PracticeItem; onAnswered: (
               {pctSent}% · {fmtNum(sent)}
             </b>
           </span>
-          <input type="range" min={0} max={100} step={5} value={pctSent} disabled={!!result} onChange={(e) => setPctSent(Number(e.target.value))} aria-label="Share of your home army to send" />
+          <input type="range" min={0} max={100} step={1} value={pctSent} disabled={!!result} onChange={(e) => setPctSent(Number(e.target.value))} aria-label="Share of your home army to send" />
         </label>
         <div className="drill-bar" aria-hidden="true">
           <span className="drill-fill" style={{ width: at(d.kind === "attack" ? sent : left) }} />
+          {shade && <span className="drill-range" style={{ left: at(shade[0]), width: `max(6px, calc(${at(shade[1])} - ${at(shade[0])}))` }} />}
           {d.kind === "attack" ? (
-            <span className="drill-line" style={{ left: at(f.theirHome), background: "var(--good)" }} />
+            <>
+              <span className="drill-line" style={{ left: at(f.theirHome), background: "var(--good)" }} />
+              {most !== null && <span className="drill-line" style={{ left: at(most), background: "var(--blunder)" }} />}
+            </>
           ) : (
             <>
               {d.floor !== null && <span className="drill-line" style={{ left: at(d.floor), background: "var(--blunder)" }} />}
@@ -168,7 +179,10 @@ function Drill({ item, onAnswered, onNext }: { item: PracticeItem; onAnswered: (
           {d.kind === "attack" ? (
             <>
               <span>Sending: <b style={{ color: "var(--paper)" }}>{fmtNum(sent)}</b> · left at home {fmtNum(left)}</span>
-              <span style={{ color: "var(--good)" }}>| their home army ({fmtNum(f.theirHome)})</span>
+              <span>
+                <span style={{ color: "var(--good)" }}>| their home army ({fmtNum(f.theirHome)})</span>
+                {most !== null && <span style={{ color: "var(--blunder)" }}> · | most you can send and keep your {fmtNum(d.floor!)} floor ({fmtNum(most)})</span>}
+              </span>
             </>
           ) : (
             <>
@@ -206,6 +220,9 @@ function Drill({ item, onAnswered, onNext }: { item: PracticeItem; onAnswered: (
               <h2 style={{ margin: 0 }}>{result.title}</h2>
             </div>
             <p style={{ marginTop: 10 }}>{result.body}</p>
+            <p className="small muted" style={{ marginTop: -4 }}>
+              Right answer: <b style={{ color: "var(--good)" }}>{answer}</b>, shaded on the bar.
+            </p>
             <div className="drill-box call">
               <span className="eyebrow" style={{ color: "var(--brilliant)" }}>The coach's call</span>
               <p style={{ margin: "4px 0 0" }}>{d.call}</p>

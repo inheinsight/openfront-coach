@@ -227,10 +227,17 @@ export function recordDrillAnswer(gameId: string, drillId: string, pct: number, 
   getDb().prepare("INSERT INTO drill_answers(game_id, drill_id, pct, correct, answered_at) VALUES (?, ?, ?, ?, ?)").run(gameId, drillId, pct, correct ? 1 : 0, Date.now());
 }
 
-/** Attempts and correct answers per drill, keyed "gameId/drillId". */
-export function drillProgress(): Map<string, { attempts: number; correct: number }> {
-  const rows = getDb()
-    .prepare("SELECT game_id, drill_id, COUNT(*) AS attempts, SUM(correct) AS correct FROM drill_answers GROUP BY game_id, drill_id")
-    .all() as { game_id: string; drill_id: string; attempts: number; correct: number }[];
-  return new Map(rows.map((r) => [`${r.game_id}/${r.drill_id}`, { attempts: r.attempts, correct: r.correct }]));
+/**
+ * Every answer's percent per drill, keyed "gameId/drillId". Callers grade them
+ * again with the current rules; the stored `correct` is only what the grade
+ * was when you answered.
+ */
+export function drillAnswers(): Map<string, number[]> {
+  const rows = getDb().prepare("SELECT game_id, drill_id, pct FROM drill_answers ORDER BY answered_at").all() as { game_id: string; drill_id: string; pct: number }[];
+  const out = new Map<string, number[]>();
+  for (const r of rows) {
+    const key = `${r.game_id}/${r.drill_id}`;
+    out.set(key, [...(out.get(key) ?? []), r.pct]);
+  }
+  return out;
 }

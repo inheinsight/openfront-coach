@@ -138,6 +138,8 @@ export interface AttackCard {
   share: number;
   homeBefore: number;
   cap: number;
+  /** Troops to keep at home at this moment: 25% of your cap in the opening, 35% after. */
+  floor: number;
   /** Troops the target held at home (not in attacks) at your first click. */
   targetHome: number;
   /** sent ÷ targetHome. */
@@ -149,7 +151,7 @@ export interface AttackCard {
   homeAfter: number | null;
   /** Their home army (and yours) from 20 s before to 60 s after. */
   series: { tick: number; theirs: number | null; yours: number | null }[];
-  /** When holding your army would have given a far better stack. */
+  /** When holding would have let you stack at least their home army and still keep your floor. */
   window: { tick: number; theirHome: number; stack: number } | null;
   /** Set when this was an answer to their attack on you. */
   counter: { tick: number; incoming: number } | null;
@@ -169,10 +171,19 @@ export interface DrillSpot {
   target: string;
   targetId: number;
   facts: { yourHome: number; cap: number; theirHome: number; incoming: number | null; yourTiles: number; theirTiles: number };
-  /** Troops to keep at home (defend drills). */
+  /** Troops to keep at home. Null on attack drills analyzed before version 4. */
   floor: number | null;
   youDid: { share: number; clicks: number; text: string };
   call: string;
+}
+
+export interface DrillVerdict {
+  severity: Severity;
+  title: string;
+  body: string;
+  correct: boolean;
+  /** The right answer, in whole percent of your home army. */
+  range: { lo: number; hi: number };
 }
 
 export interface TroopReport {

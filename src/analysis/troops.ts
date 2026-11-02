@@ -8,7 +8,7 @@ import type { PlayerMetrics } from "./metrics.js";
 import { median } from "./metrics.js";
 import type { ReplayView } from "./replayView.js";
 import { CHEAPEST_STACK_RATIO, clock, fmtNum, GOOD_STACK_RATIO, HOME_FLOOR, lossMultiplier, OPENING_FLOOR, OPENING_SECONDS, pct, TICKS_PER_SECOND } from "./rules.js";
-import type { AttackCard, DrillSpot, Severity, TroopLesson, TroopReport, TroopRule } from "./types.js";
+import type { AttackCard, DrillSpot, DrillVerdict, Severity, TroopLesson, TroopReport, TroopRule } from "./types.js";
 
 const SEC = TICKS_PER_SECOND;
 /** Clicks on the same player this close together are one decision. */
@@ -76,8 +76,28 @@ function outcome(a: AttackRecord) {
   return { used, tiles: a.tilesCaptured ?? Math.min(ownGain, targetLoss) };
 }
 
-function severityOf(s: Send): Severity {
-  if (s.stack >= 1) return "good";
+/** Home-army floor at this tick: 25% of your cap in the opening, 35% after. */
+export function floorAt(spawnPhaseEndTick: number, tick: number, cap: number): number {
+  const opening = (tick - spawnPhaseEndTick) / SEC <= OPENING_SECONDS;
+  return Math.round((opening ? OPENING_FLOOR : HOME_FLOOR) * Math.max(0, cap));
+}
+
+/**
+ * What the stack and floor rules say to send at a player, in whole percent of
+ * your home army: at least their home army, and no more than what sits above
+ * your floor. When nothing fits both, hold: 0 to 0. The attack card's call and
+ * the drill's grade both come from this, so they can't disagree.
+ */
+export function attackRange(home: number, floor: number, theirHome: number): { lo: number; hi: number; aim: number } {
+  const h = Math.max(1, home);
+  const lo = Math.max(1, Math.ceil((100 * theirHome) / h - 1e-9));
+  const hi = Math.floor((100 * Math.max(0, home - floor)) / h + 1e-9);
+  if (lo > hi) return { lo: 0, hi: 0, aim: 0 };
+  return { lo, hi, aim: Math.max(lo, Math.min(hi, Math.round((100 * GOOD_STACK_RATIO * theirHome) / h))) };
+}
+
+function severityOf(s: Send, floor: number): Severity {
+  if (s.stack >= 1) return s.homeBefore - s.sent >= floor ? "good" : "inaccuracy";
   if (s.stack <= 0.5) return s.share >= 0.6 ? "blunder" : "mistake";
   return "inaccuracy";
 }
@@ -116,9 +136,6 @@ function pushesOn(view: ReplayView, me: PlayerMetrics): Push[] {
 /** The push this send answered, if you clicked on the attacker within 10 s of it landing. */
 const answering = (s: Send, pushes: Push[]) => pushes.find((p) => p.attacker === s.target && s.tick >= p.tick && s.tick <= p.tick + 10 * SEC) ?? null;
 
-/** Holding your army only counts as a missed chance from this stack up. */
-const WINDOW_MIN_STACK = 1.25;
-
 function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes: Push[], teamGame: boolean): AttackCard {
   const sid = me.smallID;
   const end = Math.min(view.data.meta.ticks, me.eliminatedTick ?? Infinity);
@@ -151,19 +168,24 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
   }
   const homeAfter = lowest(view, sid, s.lastTick, s.lastTick + 10 * SEC);
 
-  // Holding instead: your army as it was, against their home army afterwards.
+  const floor = floorAt(me.spawnPhaseEndTick, s.tick, s.cap);
+  const sendable = Math.max(0, s.homeBefore - floor);
+  const range = attackRange(s.homeBefore, floor, s.targetHome);
+  const keep = s.homeBefore - s.sent;
+
+  // Holding instead: what sat above your floor, against their home army afterwards.
   const push = answering(s, pushes);
   let window: AttackCard["window"] = null;
-  if (s.stack < 1 && !push) {
+  if (range.hi === 0 && !push) {
     let best: AttackCard["window"] = null;
     for (const p of series) {
       if (p.tick <= s.lastTick || !p.theirs || p.theirs <= 0) continue;
-      const st = s.homeBefore / p.theirs;
+      const st = sendable / p.theirs;
       if (st >= CHEAPEST_STACK_RATIO) {
         window = { tick: p.tick, theirHome: p.theirs, stack: st };
         break;
       }
-      if (st >= WINDOW_MIN_STACK && (!best || st > best.stack)) best = { tick: p.tick, theirHome: p.theirs, stack: st };
+      if (st >= 1 && (!best || st > best.stack)) best = { tick: p.tick, theirHome: p.theirs, stack: st };
     }
     window ??= best;
   }
@@ -190,24 +212,37 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
   if (troopsUsed > 0) did.push(`Lost ${fmtNum(troopsUsed)} troops for ${fmtNum(tilesGained)} tiles.`);
   if (homeAfter !== null && homeAfter < s.homeBefore * 0.6) did.push(`Your home army fell from ${fmtNum(s.homeBefore)} to ${fmtNum(homeAfter)}.`);
 
+  const at = (p: number) => fmtNum((s.homeBefore * p) / 100);
   let call: string;
   if (push && s.share > 0.4) {
     call =
       `They had just sent ${fmtNum(push.troops)} at you. Keep your army home: their attack has to win every tile against it, and opposing attacks cancel troop for troop, so a big counter mostly trades your reserve away.` +
       (teamGame ? " Ask your team for troops instead." : "");
-  } else if (s.stack >= 1) {
-    call = `Good stack: ${x(s.stack)} their home army.` + (s.stack < CHEAPEST_STACK_RATIO ? ` At ${x(CHEAPEST_STACK_RATIO)} or more every tile costs the least.` : " That's the cheapest loss rate there is.");
-  } else if (s.targetHome / s.homeBefore <= 1 - HOME_FLOOR) {
-    // You could have matched them and still kept a floor at home.
-    call = `Send at least ${fmtNum(s.targetHome)} (${pct(s.targetHome / s.homeBefore)} of your army) to match their home army, or don't attack. ${fmtNum(s.sent)} was ${x(s.stack)}, so every tile cost you ${lossMultiplier(s.sent, s.targetHome).toFixed(1)}× the base rate.`;
-  } else if (window) {
+  } else if (range.hi > 0 && s.stack >= 1 && keep >= floor) {
     call =
-      `Hold your ${fmtNum(s.homeBefore)}. At ${clock(window.tick)} their home army fell to ${fmtNum(window.theirHome)}: your whole army there would have been ${x(window.stack)}` +
-      (window.stack >= CHEAPEST_STACK_RATIO ? ", the cheapest loss rate there is." : ".");
-  } else if (teammates.length) {
-    call = `Don't send this alone: matching their home army needed ${fmtNum(s.targetHome)}. Donate to ${teammates[0]}, who was already attacking them, or wait until they send troops elsewhere.`;
+      `Good stack: ${x(s.stack)} their home army, with ${fmtNum(keep)} kept at home.` +
+      (s.stack < CHEAPEST_STACK_RATIO ? ` At ${x(CHEAPEST_STACK_RATIO)} or more every tile costs the least.` : " That's the cheapest loss rate there is.");
+  } else if (range.hi > 0) {
+    const send = `Send ${range.lo}–${range.hi}% of your army: at least ${at(range.lo)} to match their home army, and no more than ${at(range.hi)} so your ${fmtNum(floor)} floor stays home.`;
+    const aimStack = (s.homeBefore * range.aim) / 100 / Math.max(1, s.targetHome);
+    const aim = range.aim > range.lo ? ` Aim for ${range.aim}% (${at(range.aim)})${range.aim === range.hi && aimStack < GOOD_STACK_RATIO - 0.05 ? ", the most your floor allows" : ""}: ${x(aimStack)} their home army.` : "";
+    call =
+      s.stack >= 1
+        ? `${send}${aim} ${fmtNum(s.sent)} beat them but left ${fmtNum(keep)} at home.`
+        : `${send}${aim} ${fmtNum(s.sent)} was ${x(s.stack)}, so every tile cost you ${lossMultiplier(s.sent, s.targetHome).toFixed(1)}× the base rate.`;
   } else {
-    call = `Don't attack them with this army: matching their home army needed ${fmtNum(s.targetHome)}, and you had ${fmtNum(s.homeBefore)}. Wait until they send troops elsewhere, or pick a player your army outnumbers.`;
+    const parts = [
+      `Hold. Matching their ${fmtNum(s.targetHome)} at home while keeping your ${fmtNum(floor)} floor needed ${fmtNum(s.targetHome + floor)}, and you had ${fmtNum(s.homeBefore)}.`,
+    ];
+    if (s.stack >= 1) parts.push(`Your ${fmtNum(s.sent)} beat their home army but left ${fmtNum(keep)} at home.`);
+    if (window)
+      parts.push(
+        `Watch for the opening: at ${clock(window.tick)} their home army fell to ${fmtNum(window.theirHome)}, and the ${fmtNum(sendable)} above your floor would have been ${x(window.stack)}` +
+          (window.stack >= CHEAPEST_STACK_RATIO ? ", the cheapest loss rate there is." : "."),
+      );
+    else if (teammates.length) parts.push(`Or donate to ${teammates[0]}, who was already attacking them.`);
+    else parts.push("Wait until they send troops elsewhere, or pick a player your army outnumbers.");
+    call = parts.join(" ");
   }
 
   return {
@@ -216,13 +251,14 @@ function cardFor(view: ReplayView, me: PlayerMetrics, s: Send, i: number, pushes
     lastTick: s.lastTick,
     target: name,
     targetId: s.target,
-    severity: severityOf(s),
+    severity: severityOf(s, floor),
     clicks: s.clicks,
     clickShares: s.clickShares.map((v) => +v.toFixed(3)),
     sent: s.sent,
     share: +s.share.toFixed(3),
     homeBefore: s.homeBefore,
     cap: s.cap,
+    floor,
     targetHome: s.targetHome,
     stack: +s.stack.toFixed(3),
     loss: +lossMultiplier(s.sent, s.targetHome).toFixed(2),
@@ -417,7 +453,7 @@ export function analyzeTroops(view: ReplayView, me: PlayerMetrics, all: PlayerMe
       target: c.target,
       targetId: c.targetId,
       facts: { yourHome: c.homeBefore, cap: c.cap, theirHome: c.targetHome, incoming: null, yourTiles: tiles(sid, c.tick), theirTiles: tiles(c.targetId, c.tick) },
-      floor: null,
+      floor: c.floor,
       youDid: { share: c.share, clicks: c.clicks, text: c.did.filter((d) => !d.startsWith("You were at your cap")).join(" ") },
       call: c.call,
     });
@@ -435,8 +471,7 @@ export function analyzeTroops(view: ReplayView, me: PlayerMetrics, all: PlayerMe
     const share = Math.min(1, answer.reduce((s, a) => s + a.sent, 0) / Math.max(1, home));
     if (share <= 0.4) continue;
     const clicksN = answer.reduce((s, a) => s + a.clicks, 0);
-    const opening = (p.tick - me.spawnPhaseEndTick) / SEC <= OPENING_SECONDS;
-    const floorTroops = Math.round((opening ? OPENING_FLOOR : HOME_FLOOR) * cap);
+    const floorTroops = floorAt(me.spawnPhaseEndTick, p.tick, cap);
     const lastAnswer = answer[answer.length - 1].lastTick;
     const after = lowest(view, sid, lastAnswer, lastAnswer + 10 * SEC);
     const name = view.name(p.attacker);
@@ -475,29 +510,37 @@ export function analyzeTroops(view: ReplayView, me: PlayerMetrics, all: PlayerMe
   };
 }
 
-/** How an answer to a drill compares with the coach's call. */
-export function gradeDrill(d: DrillSpot, pctSent: number): { severity: Severity; title: string; body: string; correct: boolean } {
+/** The drill's right answer, in whole percent of your home army: the same rules as its call. */
+export function drillRange(d: DrillSpot): { lo: number; hi: number; aim: number } {
+  if (d.kind === "defend") return { lo: 0, hi: 10, aim: 0 };
+  return attackRange(d.facts.yourHome, d.floor ?? Math.round(HOME_FLOOR * d.facts.cap), d.facts.theirHome);
+}
+
+/** How an answer to a drill compares with the coach's call. Right means inside drillRange. */
+export function gradeDrill(d: DrillSpot, pctSent: number): DrillVerdict {
   const p = Math.max(0, Math.min(100, Math.round(pctSent)));
   const home = d.facts.yourHome;
-  const sent = Math.round((home * p) / 100);
-  const r = (severity: Severity, title: string, body: string) => ({ severity, title, body, correct: severity === "good" || severity === "brilliant" });
+  const exact = (home * p) / 100;
+  const sent = Math.round(exact);
+  const keep = home - sent;
+  const range = drillRange(d);
+  const correct = p >= range.lo && p <= range.hi;
+  const r = (severity: Severity, title: string, body: string): DrillVerdict => ({ severity, title, body, correct, range: { lo: range.lo, hi: range.hi } });
   if (d.kind === "attack") {
     const theirs = Math.max(1, d.facts.theirHome);
-    const full = home / theirs;
-    if (p === 0) {
-      return full < 1
-        ? r("good", "Good call", `Even your whole army was ${x(full)} their home army. Holding cost you nothing.`)
-        : r("inaccuracy", "You could have hit them", `All ${fmtNum(home)} of your army was ${x(full)} their home army.`);
-    }
-    const st = sent / theirs;
-    if (st >= CHEAPEST_STACK_RATIO) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army: every tile costs the least.`);
-    if (st >= 1) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army.`);
+    const floor = d.floor ?? Math.round(HOME_FLOOR * d.facts.cap);
+    const most = Math.max(0, home - floor);
+    const st = exact / theirs;
+    if (correct && p === 0) return r("good", "Good call", `Keeping your ${fmtNum(floor)} floor, you could send ${fmtNum(most)}: ${x(most / theirs)} their home army. Holding cost you nothing.`);
+    if (correct) return r("good", "Good stack", `${fmtNum(sent)} is ${x(st)} their home army${st >= CHEAPEST_STACK_RATIO ? ", the cheapest loss rate there is" : ""}, and ${fmtNum(keep)} stays home.`);
+    if (p === 0) return r("inaccuracy", "You could have hit them", `Keeping your ${fmtNum(floor)} floor, you could send up to ${fmtNum(most)}: ${x(most / theirs)} their home army.`);
+    if (st >= 1) return r(keep >= floor / 2 ? "inaccuracy" : "mistake", "Below your floor", `${fmtNum(sent)} beats their home army (${x(st)}) but leaves ${fmtNum(keep)} at home, under your ${fmtNum(floor)} floor.`);
     if (st > 0.5) return r("inaccuracy", "Short of their home army", `${fmtNum(sent)} is ${x(st)} their home army, so each tile costs you ${lossMultiplier(sent, theirs).toFixed(1)}× the base rate.`);
     return r(p >= 60 ? "blunder" : "mistake", "At the double-loss ceiling", `${fmtNum(sent)} into ${fmtNum(theirs)} at home is ${x(st)}: every tile costs you double.`);
   }
   const floor = d.floor ?? 0;
-  const keep = home - sent;
-  if (p <= 10 || keep >= floor) return r("good", "Good call", `You keep ${fmtNum(keep)} at home${floor ? ` (floor ${fmtNum(floor)})` : ""}. Their attack has to grind through it tile by tile.`);
+  if (correct) return r("good", "Good call", `You keep ${fmtNum(keep)} at home${floor ? ` (floor ${fmtNum(floor)})` : ""}. Their attack has to grind through it tile by tile.`);
+  if (keep >= floor) return r("inaccuracy", "Bigger than it needs to be", `You keep your ${fmtNum(floor)} floor, but a ${p}% counter mostly trades troops with their attack. 0–10% does the job.`);
   if (p <= 40) return r("inaccuracy", "Below your floor", `You drop to ${fmtNum(keep)}, under your ${fmtNum(floor)} floor. If they follow up, you are thin.`);
   return r(p >= 60 ? "blunder" : "mistake", "That empties your home", `Sending ${p}% leaves ${fmtNum(keep)} at home against a player holding ${fmtNum(d.facts.theirHome)}.`);
 }

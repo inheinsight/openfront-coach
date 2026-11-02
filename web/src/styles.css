@@ -286,6 +286,7 @@ td.r, th.r { text-align: right; }
 .drill-bar { position: relative; height: 14px; background: var(--line); border-radius: 2px; }
 .drill-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--you); border-radius: 2px; }
 .drill-line { position: absolute; top: -4px; bottom: -4px; width: 2px; }
+.drill-range { position: absolute; top: -6px; bottom: -6px; border: 2px solid var(--good); border-radius: 3px; background: rgba(123, 196, 127, 0.2); box-sizing: border-box; }
 .drill-lock { min-height: 44px; font-family: var(--display); font-size: 1.1rem; }
 .drill-box { background: var(--abyss-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
 .drill-box.call { background: var(--shoal-2); border-top: 3px solid var(--brilliant); }

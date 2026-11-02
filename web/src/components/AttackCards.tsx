@@ -6,12 +6,15 @@ import { ClickBar, stackColor, xs } from "./Lesson";
 /** Log position of a stack on the 0.05×–5× gauge, as a percentage. */
 const gx = (s: number) => ((Math.log10(Math.min(5, Math.max(0.05, s))) - Math.log10(0.05)) / 2) * 100;
 
+/** What you could send and still keep your floor at home (cards from before version 4 have no floor). */
+const aboveFloor = (card: AttackCard) => Math.max(0, card.homeBefore - (card.floor ?? 0));
+
 /** Your stack against the engine's loss bands: 2× losses at ≤0.5×, cheapest from 1.67×. */
 function StackGauge({ card }: { card: AttackCard }) {
-  const full = card.homeBefore / Math.max(1, card.targetHome);
+  const most = aboveFloor(card) / Math.max(1, card.targetHome);
   const marks: { s: number; label: string; color: string; hollow?: boolean }[] = [{ s: card.stack, label: `you sent ${xs(card.stack)}`, color: "var(--you)" }];
   if (card.window) marks.push({ s: card.window.stack, label: `held until ${clock(card.window.tick)}: ${xs(card.window.stack)}`, color: "var(--brilliant)", hollow: true });
-  else if (full > card.stack * 1.15 && !card.counter) marks.push({ s: full, label: `your whole army: ${xs(full)}`, color: "var(--paper-dim)", hollow: true });
+  else if (Math.abs(most - card.stack) > card.stack * 0.15 && !card.counter) marks.push({ s: most, label: `most above your floor: ${xs(most)}`, color: "var(--paper-dim)", hollow: true });
   return (
     <div className="gauge" role="img" aria-label={marks.map((m) => m.label).join("; ")}>
       <div className="gauge-bands">
@@ -38,6 +41,7 @@ function StackGauge({ card }: { card: AttackCard }) {
 function WindowChart({ card }: { card: AttackCard }) {
   const data = card.series.map((p) => ({ t: p.tick, theirs: p.theirs, yours: p.yours }));
   const showHeld = !card.counter && card.stack < 1;
+  const most = aboveFloor(card);
   return (
     <ResponsiveContainer width="100%" height={220}>
       <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
@@ -55,8 +59,8 @@ function WindowChart({ card }: { card: AttackCard }) {
           }
         />
         <ReferenceLine x={card.tick} stroke="#e9e2cf" strokeOpacity={0.5} label={{ value: "you clicked", position: "insideTopLeft", fill: "#c9c2b0", fontSize: 11 }} />
-        {showHeld && <ReferenceLine y={card.homeBefore} stroke="#f5b83d" strokeDasharray="6 4" label={{ value: `your ${fmtNum(card.homeBefore)}, held`, position: "insideTopRight", fill: "#f5b83d", fontSize: 11 }} />}
-        {showHeld && <ReferenceLine y={card.homeBefore / 1.67} stroke="#3fd0c9" strokeOpacity={0.7} strokeDasharray="2 3" label={{ value: "1.67× below this", position: "insideBottomRight", fill: "#3fd0c9", fontSize: 11 }} />}
+        {showHeld && <ReferenceLine y={most} stroke="#f5b83d" strokeDasharray="6 4" label={{ value: `your ${fmtNum(most)} above the floor: 1× below this`, position: "insideTopRight", fill: "#f5b83d", fontSize: 11 }} />}
+        {showHeld && <ReferenceLine y={most / 1.67} stroke="#3fd0c9" strokeOpacity={0.7} strokeDasharray="2 3" label={{ value: "1.67× below this", position: "insideBottomRight", fill: "#3fd0c9", fontSize: 11 }} />}
         <Line dataKey="theirs" name={`${card.target} at home`} stroke="#9db4cf" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
         <Line dataKey="yours" name="You at home" stroke="#f5b83d" strokeWidth={1.5} strokeOpacity={0.6} dot={false} connectNulls isAnimationActive={false} />
         {card.window && <ReferenceDot x={card.window.tick} y={card.window.theirHome} r={6} fill="#3fd0c9" stroke="#0e1b2c" strokeWidth={2} />}

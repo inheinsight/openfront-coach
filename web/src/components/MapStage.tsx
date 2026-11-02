@@ -64,43 +64,83 @@ function baseColor(p: { smallID: number; type: string }, focused: boolean, dim: 
   return dim ? [Math.round(c[0] * 0.62), Math.round(c[1] * 0.62), Math.round(c[2] * 0.62)] : c;
 }
 
-interface Region {
-  id: number;
+interface Box {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
-  cx: number;
-  cy: number;
   n: number;
 }
 
-/** Bounding boxes and centroids for a few players in one frame. */
-function regions(frame: Uint16Array, w: number, ids: number[]): Map<number, Region> {
+interface Region extends Box {
+  id: number;
+  cx: number;
+  cy: number;
+  /** The region cut into square cells: where each cell's tiles sit, and how many. Labels go on the fullest one in view. */
+  cells: { x: number; y: number; n: number }[];
+}
+
+const emptyBox = (): Box => ({ minX: Infinity, minY: Infinity, maxX: -1, maxY: -1, n: 0 });
+
+function grow(b: Box, x: number, y: number) {
+  if (x < b.minX) b.minX = x;
+  if (x > b.maxX) b.maxX = x;
+  if (y < b.minY) b.minY = y;
+  if (y > b.maxY) b.maxY = y;
+  b.n++;
+}
+
+/**
+ * Bounding boxes, centroids and label cells for a few players in one frame,
+ * plus the box around the border between `pair` (you and the moment's main
+ * player), where land of one touches land of the other.
+ */
+function regions(frame: Uint16Array, w: number, ids: number[], pair: [number, number] | null): { regs: Map<number, Region>; border: Box } {
   const want = new Set(ids);
   const acc = new Map<number, Region>();
-  for (const id of ids) acc.set(id, { id, minX: Infinity, minY: Infinity, maxX: -1, maxY: -1, cx: 0, cy: 0, n: 0 });
+  const cellsOf = new Map<number, Map<number, { x: number; y: number; n: number }>>();
+  const cell = Math.max(3, Math.round(w / 40));
+  const cols = Math.ceil(w / cell);
+  const border = emptyBox();
+  for (const id of ids) {
+    acc.set(id, { id, ...emptyBox(), cx: 0, cy: 0, cells: [] });
+    cellsOf.set(id, new Map());
+  }
   for (let i = 0; i < frame.length; i++) {
     const o = frame[i];
     if (!o || !want.has(o)) continue;
     const r = acc.get(o)!;
     const x = i % w;
     const y = (i / w) | 0;
-    if (x < r.minX) r.minX = x;
-    if (x > r.maxX) r.maxX = x;
-    if (y < r.minY) r.minY = y;
-    if (y > r.maxY) r.maxY = y;
+    grow(r, x, y);
     r.cx += x;
     r.cy += y;
-    r.n++;
-  }
-  for (const r of acc.values()) {
-    if (r.n) {
-      r.cx /= r.n;
-      r.cy /= r.n;
+    const key = ((y / cell) | 0) * cols + ((x / cell) | 0);
+    const c = cellsOf.get(o)!.get(key);
+    if (c) {
+      c.x += x;
+      c.y += y;
+      c.n++;
+    } else cellsOf.get(o)!.set(key, { x, y, n: 1 });
+    if (pair && (o === pair[0] || o === pair[1])) {
+      const other = o === pair[0] ? pair[1] : pair[0];
+      if (x < w - 1 && frame[i + 1] === other) {
+        grow(border, x, y);
+        grow(border, x + 1, y);
+      }
+      if (i + w < frame.length && frame[i + w] === other) {
+        grow(border, x, y);
+        grow(border, x, y + 1);
+      }
     }
   }
-  return acc;
+  for (const r of acc.values()) {
+    if (!r.n) continue;
+    r.cx /= r.n;
+    r.cy /= r.n;
+    r.cells = [...cellsOf.get(r.id)!.values()].map((c) => ({ x: c.x / c.n, y: c.y / c.n, n: c.n })).sort((a, b) => b.n - a.n);
+  }
+  return { regs: acc, border };
 }
 
 const reduceMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -137,7 +177,8 @@ export function MapStage({
   const frame = map.frames[Math.min(frameIndex, map.frames.length - 1)];
   const focusKey = focus.join(",");
   const ids = useMemo(() => [...new Set([...(map.me ? [map.me] : []), ...focus])], [map.me, focusKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const regs = useMemo(() => regions(frame, map.width, ids), [frame, map.width, ids]);
+  const pair: [number, number] | null = map.me && focus[0] && focus[0] !== map.me ? [map.me, focus[0]] : null;
+  const { regs, border } = useMemo(() => regions(frame, map.width, ids, pair), [frame, map.width, ids, pair?.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fit the canvas to its container, keeping the map's aspect ratio.
   useEffect(() => {
@@ -244,32 +285,45 @@ export function MapStage({
     }
     ctx.font = "600 13px Barlow, system-ui, sans-serif";
 
+    // Each label sits on that player's own land: the fullest patch of it in view.
+    const placed: [number, number, number, number][] = [];
+    const overlaps = (x0: number, y0: number, x1: number, y1: number) => placed.some(([a0, b0, a1, b1]) => x0 < a1 && x1 > a0 && y0 < b1 && y1 > b0);
     for (const id of showLabels ? ids : []) {
       const r = regs.get(id);
       if (!r?.n) continue;
       const isMe = id === map.me;
       const [sx0, sy0] = toScreen(r.minX, r.minY);
       const [sx1, sy1] = toScreen(r.maxX + 1, r.maxY + 1);
-      const [cx, cy] = toScreen(r.cx + 0.5, r.cy + 0.5);
       const small = Math.max(sx1 - sx0, sy1 - sy0) < 28;
       const color = isMe ? "#f5b83d" : "#ff6352";
+      const label = isMe ? "You" : map.players.get(id)?.name ?? `#${id}`;
+      const tw = ctx.measureText(label).width + 12;
+      let lx: number;
+      let ly: number;
       if (small) {
+        const [cx, cy] = toScreen(r.cx + 0.5, r.cy + 0.5);
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(cx, cy, 16, 0, Math.PI * 2);
         ctx.stroke();
+        lx = cx;
+        ly = cy - 26;
+      } else {
+        const spot = r.cells.map((c) => toScreen(c.x + 0.5, c.y + 0.5)).find(([px, py]) => px >= tw / 2 + 4 && px <= size.w - tw / 2 - 4 && py >= 14 && py <= size.h - 14);
+        if (!spot) continue;
+        [lx, ly] = spot;
       }
-      const label = isMe ? "You" : map.players.get(id)?.name ?? `#${id}`;
-      const ly = small ? cy - 26 : Math.max(sy0 - 12, 12);
-      const tw = ctx.measureText(label).width + 12;
+      const dy = [0, 24, -24, 48, -48].find((d) => !overlaps(lx - tw / 2, ly + d - 10, lx + tw / 2, ly + d + 10)) ?? 0;
+      ly += dy;
+      placed.push([lx - tw / 2, ly - 10, lx + tw / 2, ly + 10]);
       ctx.fillStyle = "rgba(11, 22, 36, 0.86)";
-      ctx.fillRect(cx - tw / 2, ly - 10, tw, 20);
+      ctx.fillRect(lx - tw / 2, ly - 10, tw, 20);
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
-      ctx.strokeRect(cx - tw / 2 + 0.5, ly - 9.5, tw - 1, 19);
+      ctx.strokeRect(lx - tw / 2 + 0.5, ly - 9.5, tw - 1, 19);
       ctx.fillStyle = color;
-      ctx.fillText(label, cx, ly + 1);
+      ctx.fillText(label, lx, ly + 1);
     }
   }, [base, ids, map.me, map.players, regs, size.h, size.w, markers, paths, showLabels]);
 
@@ -366,11 +420,18 @@ export function MapStage({
       const z = Math.min(map.width / bw, (size.h / base) / bh);
       return void animateTo({ x: (minPX + maxPX) / 2, y: (minPY + maxPY) / 2, z });
     }
+    // Where you and the moment's main player touch, frame that border: it's where the fight is.
+    if (border.n) {
+      const bw = Math.max((border.maxX - border.minX + 1) * 1.6, map.width / 5);
+      const bh = Math.max((border.maxY - border.minY + 1) * 1.6, map.height / 5);
+      const z = Math.min(map.width / bw, (size.h / base) / bh);
+      return void animateTo({ x: (border.minX + border.maxX + 1) / 2, y: (border.minY + border.maxY + 1) / 2, z });
+    }
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -1;
     let maxY = -1;
-    // Frame you and the moment's main player; others are labelled if in view.
+    // Otherwise frame you and the moment's main player; others are labelled if in view.
     const fit = new Set([map.me, focus[0]].filter((x): x is number => typeof x === "number"));
     for (const r of regs.values()) {
       if (!r.n || !fit.has(r.id)) continue;

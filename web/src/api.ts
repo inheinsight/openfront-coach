@@ -1,6 +1,6 @@
-import type { Analysis, AttackCard, DrillSpot, Severity, TroopLesson, TroopRule } from "../../src/analysis/types";
+import type { Analysis, AttackCard, DrillSpot, DrillVerdict, Severity, TroopLesson, TroopRule } from "../../src/analysis/types";
 
-export type { Analysis, AttackCard, DrillSpot, Severity, TroopLesson, TroopRule };
+export type { Analysis, AttackCard, DrillSpot, DrillVerdict, Severity, TroopLesson, TroopRule };
 
 export interface GameSummary {
   game_id: string;
@@ -73,13 +73,6 @@ export interface PracticeItem {
   drill: DrillSpot;
   attempts: number;
   correct: number;
-}
-
-export interface DrillVerdict {
-  severity: Severity;
-  title: string;
-  body: string;
-  correct: boolean;
 }
 
 // The server puts this install's API token in the page; writes must send it.
